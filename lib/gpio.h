@@ -49,6 +49,8 @@ public:
   // Returns the bits that were available and could be reserved.
   gpio_bits_t RequestInputs(gpio_bits_t inputs);
 
+  void ForceOutput(gpio_bits_t bits); 
+
   // Set the bits that are '1' in the output. Leave the rest untouched.
   inline void SetBits(gpio_bits_t value) {
     if (!value) return;
@@ -154,6 +156,9 @@ public:
   // If SendPulse() is asynchronously implemented, wait for pulse to finish.
   virtual void WaitPulseFinished() {}
 };
+
+// NEW: control polarity of hardware OE pulses.
+void SetHardwarePulsePolarityInverted(bool inverted);
 
 // Get rolling over microsecond counter. We get this from a hardware register
 // if possible and a terrible slow fallback otherwise.

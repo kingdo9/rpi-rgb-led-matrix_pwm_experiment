@@ -26,23 +26,164 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <string>  // For std::string
+#include <vector>  // For std::vector
+#include <cctype>  // For tolower
 
 #include <algorithm>
+
+#include <stdarg.h>
 
 #include "gpio.h"
 #include "../include/graphics.h"
 
+#include <chrono>
+#include <stdarg.h>
+#include <unistd.h>
+
 namespace rgb_matrix {
 namespace internal {
+// Forward declarations for local helpers.
+static int custom_strcasecmp(const char *s1, const char *s2);
+static int custom_strncasecmp(const char *s1, const char *s2, size_t n);
+
 // We need one global instance of a timing correct pulser. There are different
 // implementations depending on the context.
 static PinPulser *sOutputEnablePulser = NULL;
+// Dedicated OE pulser for the FM6373 path so we can match the MRV412-style
+// fixed OE gate without software jitter. We size this in nanoseconds to equal
+// 4 DCLKs by default and reuse the hardware PWM if available.
+static PinPulser *sFM6373OEPulser = NULL;
+static bool sFM6373_Enabled = false;  // Global variable, default is false until --led-panel-type=fm6373
+static bool sFM6373_DebugOnce = true;  // Enables logging for the current frame
+static bool sFM6373_DebugAlways = false;  // Persist debug logging every frame
+static int sFM6373_DebugFramesPending = 0;  // Number of upcoming frames to log
+
+static inline bool FM6373_DebugEnabled() {
+  return sFM6373_DebugAlways || sFM6373_DebugOnce;
+}
+
+static void FM6373_Debug(const char *fmt, ...) {
+  if (!FM6373_DebugEnabled()) return;  // only log when enabled
+
+  using clock = std::chrono::steady_clock;
+  static const clock::time_point t0 = clock::now();
+
+  clock::time_point now = clock::now();
+  double t_seconds =
+      std::chrono::duration_cast<std::chrono::duration<double>>(now - t0).count();
+
+  // Print prefix with timestamp
+  fprintf(stderr, "[FM6373 t=%9.6f] ", t_seconds);
+
+  // Print the actual message
+  va_list ap;
+  va_start(ap, fmt);
+  vfprintf(stderr, fmt, ap);
+  va_end(ap);
+}
+
+static void FM6373_ConfigureDebugFromEnv() {
+  const char *env = getenv("FM6373_DEBUG");
+  if (env && *env) {
+    if (custom_strcasecmp(env, "always") == 0 ||
+        custom_strcasecmp(env, "all") == 0 ||
+        custom_strcasecmp(env, "on") == 0) {
+      sFM6373_DebugAlways = true;
+    } else if (custom_strcasecmp(env, "once") == 0) {
+      sFM6373_DebugFramesPending = 1;
+    } else {
+      const int frames = atoi(env);
+      if (frames > 0) sFM6373_DebugFramesPending = frames;
+    }
+  }
+
+  // Backwards-compatible: FM6373_DEBUG_ONCE forces a single debug frame.
+  const char *env_once = getenv("FM6373_DEBUG_ONCE");
+  if (env_once && *env_once) {
+    const int frames = atoi(env_once);
+    sFM6373_DebugFramesPending = (frames > 0) ? frames : 1;
+  }
+}
+
+// Refresh per-frame debug toggle. If FM6373_DebugAlways is set, we keep the
+// flag high every frame; otherwise we enable it for the requested number of
+// frames and count down here.
+static void FM6373_EnableDebugForFrameIfRequested() {
+  if (sFM6373_DebugAlways) {
+    sFM6373_DebugOnce = true;
+    return;
+  }
+
+  if (sFM6373_DebugFramesPending > 0) {
+    sFM6373_DebugOnce = true;
+    --sFM6373_DebugFramesPending;
+  } else {
+    sFM6373_DebugOnce = false;
+  }
+}
+
+// --- FM6373 hardware OE helper ------------------------------------------------
+// Default OE gate width sized to 4 DCLKs. Override with env FM6373_OE_NS if you
+// have a measured DCLK period.
+static int FM6373_GetOEPulseNanoseconds() {
+  static int cached_ns = -1;
+  if (cached_ns >= 0) return cached_ns;
+  const char *env_ns = getenv("FM6373_OE_NS");
+  if (env_ns && *env_ns) {
+    const int val = atoi(env_ns);
+    if (val > 0) {
+      cached_ns = val;
+      return cached_ns;
+    }
+  }
+  // Default assumption: ~300ns per DCLK -> 4 clocks ~1200ns.
+  const int kDefaultDclkNs = 300;
+  cached_ns = 4 * kDefaultDclkNs;
+  return cached_ns;
+}
+
+static void FM6373_EnsureOEPulser(GPIO *io, const HardwareMapping &h) {
+  if (sFM6373OEPulser != NULL) return;
+  std::vector<int> specs;
+  specs.push_back(FM6373_GetOEPulseNanoseconds());
+  // Prefer hardware pulser (PWM) to minimize jitter; fallback to timer pulser.
+  sFM6373OEPulser = PinPulser::Create(io, h.output_enable, true, specs);
+  if (sFM6373OEPulser == NULL) {
+    sFM6373OEPulser = sOutputEnablePulser;
+  }
+}
+
+
 
 #ifdef ONLY_SINGLE_SUB_PANEL
 #  define SUB_PANELS_ 1
 #else
 #  define SUB_PANELS_ 2
 #endif
+
+// Custom case-insensitive string comparison functions to fix compilation issues
+static int custom_strcasecmp(const char *s1, const char *s2) {
+    while (*s1 && *s2) {
+        if (std::tolower(static_cast<unsigned char>(*s1)) != std::tolower(static_cast<unsigned char>(*s2))) {
+            return std::tolower(static_cast<unsigned char>(*s1)) - std::tolower(static_cast<unsigned char>(*s2));
+        }
+        ++s1;
+        ++s2;
+    }
+    return std::tolower(static_cast<unsigned char>(*s1)) - std::tolower(static_cast<unsigned char>(*s2));
+}
+
+static int custom_strncasecmp(const char *s1, const char *s2, size_t n) {
+    for (size_t i = 0; i < n && s1[i] && s2[i]; ++i) {
+        int c1 = std::tolower(static_cast<unsigned char>(s1[i]));
+        int c2 = std::tolower(static_cast<unsigned char>(s2[i]));
+        if (c1 != c2) {
+            return c1 - c2;
+        }
+    }
+    return 0;
+}
 
 PixelDesignator *PixelDesignatorMap::get(int x, int y) {
   if (x < 0 || y < 0 || x >= width_ || y >= height_)
@@ -316,6 +457,49 @@ private:
   int last_row_;
 };
 
+// FM6373 RowAddressSetter - for row addressing
+// Based on C# code, it uses shift registers for scan lines.
+// Fixed: Added const HardwareMapping &h to constructor and row_lookup_
+class FM6373_DP32019B_TEST : public RowAddressSetter {
+public:
+  FM6373_DP32019B_TEST(int double_rows, const HardwareMapping &h)
+    : double_rows_(double_rows),
+      row_mask_(h.a | h.b | h.c | h.d | h.e),  // Assuming 5 address lines for 32 rows
+      clock_(h.clock),
+      latch_(h.strobe),
+      last_row_(-1) {
+    // Precompute row lookup table
+    for (int i = 0; i < double_rows_; ++i) {
+      gpio_bits_t row_address = 0;
+      row_address |= (i & 0x01) ? h.a : 0;
+      row_address |= (i & 0x02) ? h.b : 0;
+      row_address |= (i & 0x04) ? h.c : 0;
+      row_address |= (i & 0x08) ? h.d : 0;
+      row_address |= (i & 0x10) ? h.e : 0;
+      row_lookup_[i] = row_address;
+    }
+  }
+
+  virtual gpio_bits_t need_bits() const { return row_mask_ | clock_ | latch_; }
+
+  virtual void SetRowAddress(GPIO *io, int row) {
+    if (row == last_row_) return;
+    // For FM6373, assuming parallel addressing for simplicity
+    const gpio_bits_t bits = row_lookup_[row];
+    io->WriteMaskedBits(bits, row_mask_);
+    FM6373_Debug("[FM6373] SetRowAddress row=%d bits=0x%08x\n", row, bits);
+    last_row_ = row;
+  }
+
+private:
+  const int double_rows_;
+  const gpio_bits_t row_mask_;
+  const gpio_bits_t clock_;
+  const gpio_bits_t latch_;
+  gpio_bits_t row_lookup_[32];
+  int last_row_;
+};
+
 }
 
 const struct HardwareMapping *Framebuffer::hardware_mapping_ = NULL;
@@ -393,7 +577,7 @@ Framebuffer::~Framebuffer() {
 
   struct HardwareMapping *mapping = NULL;
   for (HardwareMapping *it = matrix_hardware_mappings; it->name; ++it) {
-    if (strcasecmp(it->name, named_hardware) == 0) {
+    if (custom_strcasecmp(it->name, named_hardware) == 0) {
       mapping = it;
       break;
     }
@@ -480,8 +664,9 @@ Framebuffer::~Framebuffer() {
   case 5:
     row_setter_ = new B707ShiftRegisterRowAddressSetter(double_rows, h);
     break;
-
-
+  case 6:  // For FM6373
+    row_setter_ = new FM6373_DP32019B_TEST(double_rows, h);
+    break;
   default:
     assert(0);  // unexpected type.
   }
@@ -489,7 +674,7 @@ Framebuffer::~Framebuffer() {
   all_used_bits |= row_setter_->need_bits();
 
   // Adafruit HAT identified by the same prefix.
-  const bool is_some_adafruit_hat = (0 == strncmp(h.name, "adafruit-hat",
+  const bool is_some_adafruit_hat = (0 == custom_strncasecmp(h.name, "adafruit-hat",
                                                   strlen("adafruit-hat")));
   // Initialize outputs, make sure that all of these are supported bits.
   const gpio_bits_t result = io->InitOutputs(all_used_bits,
@@ -592,20 +777,295 @@ static void InitFM6127(GPIO *io, const struct HardwareMapping &h, int columns) {
   io->ClearBits(h.strobe);
 }
 
-/*static*/ void Framebuffer::InitializePanels(GPIO *io,
-                                              const char *panel_type,
-                                              int columns) {
-  if (!panel_type || panel_type[0] == '\0') return;
-  if (strncasecmp(panel_type, "fm6126", 6) == 0) {
-    InitFM6126(io, *hardware_mapping_, columns);
+
+// Set A..E pins to a given row index (0..31).
+static inline void FM6373_SetRowBits(GPIO *io,
+                                     const HardwareMapping &h,
+                                     uint8_t row) {
+                                      
+  // Mirror the logic-capture timing: change address lines while DCLK is high.
+  const gpio_bits_t mask = h.a | h.b | h.c | h.d | h.e;
+  gpio_bits_t bits = 0;
+  if (row & 0x01) bits |= h.a;
+  if (row & 0x02) bits |= h.b;
+  if (row & 0x04) bits |= h.c;
+  if (row & 0x08) bits |= h.d;
+  if (row & 0x10) bits |= h.e;
+
+  io->WriteMaskedBits(bits, mask);
+
+  FM6373_Debug("[FM6373] RowBits row=%u A=%d B=%d C=%d D=%d E=%d mask=0x%08x\n",
+               row,
+               (row & 0x01) != 0, (row & 0x02) != 0, (row & 0x04) != 0,
+               (row & 0x08) != 0, (row & 0x10) != 0,
+               mask);
+}
+
+
+// Each sequence is one header word followed by the same data word for each
+// cascaded column-driver (7 copies -> 8 drivers total). The capture shows the
+// eighth word's lower five bits delivered by the subsequent LEConfig5 pulse, so
+// we keep only the upper 11 bits of that eighth word here and feed the tail bits
+// to PWM_Display_Register_Send_Last_Word.
+
+// Helper to create an 8-word block with the same 16-bit value.
+#define FM6373_REPEAT8(value) \
+  { (value), (value), (value), (value), (value), (value), (value), (value) }
+
+static const uint16_t register_block_1[] = {
+  0x0040,  // header
+  0x00AA, 0x00AA, 0x00AA, 0x00AA,
+  0x00AA, 0x00AA, 0x00AA, 0x00AA
+};
+
+static const uint16_t register_block_2[] = FM6373_REPEAT8(0x01AA);
+static const uint16_t register_block_3[] = FM6373_REPEAT8(0xF400);
+static const uint16_t register_block_4[] = FM6373_REPEAT8(0x0055);
+static const uint16_t register_block_5[] = FM6373_REPEAT8(0x0155);
+
+#undef FM6373_REPEAT8
+
+struct PWM_DISPLAY_REGISTER_DATA {
+  // Sequence of 16-bit words to send MSB-first on RGB lines.
+  const uint16_t *words;
+  size_t          word_count;
+
+  // If true, the last word is split: the upper partial_bit_count bits are
+  // shifted out during the preload, and the remaining lower bits are returned
+  // to be replayed as a short LAT pattern.
+  bool     has_partial_word;
+  uint16_t partial_word;
+  uint8_t  partial_bit_count;  // Number of MSBs to emit during preload.
+};
+
+// Helper to declare a row config with the usual "split last word" pattern.
+#define FM6373_ROW_CONFIG(name, block, partial_word_literal) \
+  static const PWM_DISPLAY_REGISTER_DATA name = {            \
+    block,                                                   \
+    sizeof(block) / sizeof((block)[0]),                      \
+    true,                                                    \
+    (partial_word_literal),                                  \
+    11                                                       \
   }
-  else if (strncasecmp(panel_type, "fm6127", 6) == 0) {
-    InitFM6127(io, *hardware_mapping_, columns);
+
+// Last parameter is for the split word which is partially sent on the LAT pulse
+FM6373_ROW_CONFIG(fm6373_row1_config, register_block_1, 0x00AA);
+FM6373_ROW_CONFIG(fm6373_row2_config, register_block_2, 0x01AA);
+FM6373_ROW_CONFIG(fm6373_row3_config, register_block_3, 0xF400);
+FM6373_ROW_CONFIG(fm6373_row4_config, register_block_4, 0x0055);
+FM6373_ROW_CONFIG(fm6373_row5_config, register_block_5, 0x0155);
+
+#undef FM6373_ROW_CONFIG
+
+// Table of configs indexed by (row - 1) for rows 1..5.
+static const PWM_DISPLAY_REGISTER_DATA *const k_fm6373_row_configs[] = {
+  &fm6373_row1_config,
+  &fm6373_row2_config,
+  &fm6373_row3_config,
+  &fm6373_row4_config,
+  &fm6373_row5_config,
+};
+
+// If other rows have different sequences, add them to k_fm6373_row_configs.
+// If a row matches row1, you can simply re-use fm6373_row1_config.
+static const PWM_DISPLAY_REGISTER_DATA *fm6373_row_preload_config_for_row(
+    uint8_t row) {
+  const size_t count =
+      sizeof(k_fm6373_row_configs) / sizeof(k_fm6373_row_configs[0]);
+
+  if (row >= 1 && row <= count) {
+    return k_fm6373_row_configs[row - 1];
   }
-  // else if (strncasecmp(...))  // more init types
-  else {
-    fprintf(stderr, "Unknown panel type '%s'; typo ?\n", panel_type);
+  return NULL;
+}
+
+
+// Shift 'bit_count' MSBs from 'value' out on all RGB data lines.
+// DCLK is toggled for each bit; LAT remains untouched here.
+static inline void ShiftMSBFirst(GPIO *io,
+                                 const HardwareMapping &h,
+                                 gpio_bits_t rgb_mask,
+                                 uint16_t value,
+                                 int bit_count) {
+  if (bit_count <= 0) return;
+  if (bit_count > 16) bit_count = 16;
+
+  FM6373_Debug("[FM6373] ShiftMSBFirst value=0x%04x bits=%d rgb_mask=0x%08x\n",
+               value, bit_count, rgb_mask);
+
+  for (int bit = 15; bit >= 16 - bit_count; --bit) {
+    const gpio_bits_t data_bits = (value & (1 << bit)) ? rgb_mask : 0;
+    io->WriteMaskedBits(data_bits, rgb_mask);
+    io->SetBits(h.clock);
+    io->ClearBits(h.clock);
   }
+}
+
+// Send 'pulses' LE (LAT) pulses with LAT high and data lines low by default.
+// Optionally, 'pattern_bits' (up to 8 bits) can be replayed on the data lines
+// during the first pattern_bit_count clocks to emit tail bits for a split word.
+static void PWM_Display_Send_LAT_Pulses(GPIO *io,
+                                        const HardwareMapping &h,
+                                        uint8_t row,
+                                        int pulses,
+                                        uint8_t pattern_bits,
+                                        int pattern_bit_count) {
+  FM6373_Debug("[FM6373] LEPulses row=%u pulses=%d pattern=0x%02x bits=%d\n",
+               row, pulses, pattern_bits, pattern_bit_count);
+
+  const gpio_bits_t data_mask =
+      h.p0_r1 | h.p0_g1 | h.p0_b1 |
+      h.p0_r2 | h.p0_g2 | h.p0_b2 |
+      h.p1_r1 | h.p1_g1 | h.p1_b1 |
+      h.p1_r2 | h.p1_g2 | h.p1_b2;
+
+  io->ClearBits(data_mask);
+  io->ClearBits(h.strobe);
+  io->ClearBits(h.clock);         // back low before LAT pulse train
+  io->SetBits(h.strobe);  // LAT high
+
+  if (pattern_bit_count > 0) {
+    const int total = (pattern_bit_count > pulses) ? pattern_bit_count : pulses;
+    for (int i = 0; i < total; ++i) {
+      const int bit_index = pattern_bit_count - 1 - i;
+      const bool bit_on =
+          (bit_index >= 0) ? ((pattern_bits >> bit_index) & 0x01) : false;
+      const gpio_bits_t bits = bit_on ? data_mask : 0;
+      io->WriteMaskedBits(bits, data_mask);
+      io->SetBits(h.clock);
+      io->ClearBits(h.clock);
+    }
+  } else {
+    for (int i = 0; i < pulses; ++i) {
+      io->SetBits(h.clock);
+      io->ClearBits(h.clock);
+    }
+  }
+
+  io->ClearBits(h.strobe);
+  io->SetBits(h.clock);
+  FM6373_SetRowBits(io, h, row);
+}
+
+
+// Send 16-bit words on all RGB data lines with LAT low.
+// Returns how many tail bits remain from the final word (LSB-aligned) so they
+// can be replayed during a LAT-pulse pattern. The tail pattern (up to 8 bits)
+// is written into *tail_bits_out if non-NULL.
+static int PWM_Display_Register_Send(GPIO *io,
+                                     const HardwareMapping &h,
+                                     uint8_t row,
+                                     uint8_t *tail_bits_out) {
+  const PWM_DISPLAY_REGISTER_DATA *config =
+      fm6373_row_preload_config_for_row(row);
+  if (config == NULL || config->word_count == 0 || config->words == NULL) {
+    FM6373_Debug("[FM6373] RegSend row=%u skipped (no config)\n", row);
+    return 0;  // nothing to do
+  }
+
+  FM6373_Debug("[FM6373] RegSend row=%u words=%zu partial=%d partial_bits=%u\n",
+               row, config->word_count,
+               config->has_partial_word, config->partial_bit_count);
+
+  // Mask of all RGB outputs we want to drive in parallel.
+  const gpio_bits_t rgb_mask =
+      h.p0_r1 | h.p0_g1 | h.p0_b1 |
+      h.p0_r2 | h.p0_g2 | h.p0_b2 |
+      h.p1_r1 | h.p1_g1 | h.p1_b1 |
+      h.p1_r2 | h.p1_g2 | h.p1_b2;
+
+  // Ensure LAT is low during the preload phase (acts as CS active).
+  io->ClearBits(h.strobe);
+  io->ClearBits(h.clock);
+  io->ClearBits(rgb_mask);
+
+  // Send all but the last word.
+  const size_t word_count = config->word_count;
+  if (word_count == 0) return 0;
+  const size_t last_index = word_count - 1;
+
+  size_t clocks_sent = 0;
+  for (size_t i = 0; i + 1 < word_count; ++i) {
+    ShiftMSBFirst(io, h, rgb_mask, config->words[i], 16);
+    clocks_sent += 16;
+  }
+
+  int tail_bits = 0;
+  uint8_t tail_pattern = 0;
+
+  if (config->has_partial_word && config->partial_bit_count > 0) {
+    const uint16_t last_word = config->words[last_index];
+    // Send just the upper bits (e.g. first 11) here.
+    ShiftMSBFirst(io, h, rgb_mask, last_word, config->partial_bit_count);
+    clocks_sent += config->partial_bit_count;
+
+    tail_bits = 16 - config->partial_bit_count;
+    if (tail_bits > 0 && tail_bits <= 8) {
+      tail_pattern = static_cast<uint8_t>(last_word & ((1 << tail_bits) - 1));
+      FM6373_Debug(
+          "[FM6373] RegSend tail row=%u word=0x%04x tail_bits=%d "
+          "tail_pattern=0x%02x clocks=%zu\n",
+          row, last_word, tail_bits, tail_pattern, clocks_sent);
+    } else {
+      // Either no bits left or more than 8 bits, which we don't support as
+      // a simple LAT pattern; in that case we simply ignore the split.
+      tail_bits = 0;
+    }
+  } else {
+    // No split needed, send the full word.
+    ShiftMSBFirst(io, h, rgb_mask, config->words[last_index], 16);
+    clocks_sent += 16;
+  }
+
+  // Leave data lines low at the end, LAT still low.
+  io->ClearBits(rgb_mask);
+  io->ClearBits(h.clock);
+
+  if (tail_bits_out) *tail_bits_out = tail_pattern;
+  return tail_bits;
+}
+
+
+// Frame-level preamble for FM6373:
+//   row 0, LE=3   (VSYNC-like)
+//   row 0, LE=11  (EN_OP-like)
+//   row 0, LE=14  (PRE_ACT-like)
+// followed by 5 register blocks (each 8×16-bit words).
+//
+// PWM_Display_Register_Send()
+//   Sends the first 7 of 8 words, then only the upper 11 bits of the 8th.
+//   The remaining lower 5 bits are emitted via a LAT pattern (5 clocks) to
+//   match the observed timing.
+static void FM6373_Init_And_Registers(GPIO *io, const HardwareMapping &h) {
+  FM6373_Debug("[FM6373] === Frame preamble start ===\n");
+
+  // Row 0 command pulses: VSYNC / EN_OP / PRE_ACT equivalents.
+  PWM_Display_Send_LAT_Pulses(io, h, 0, 3, 0, 0);
+  PWM_Display_Send_LAT_Pulses(io, h, 0, 11, 0, 0);
+  PWM_Display_Send_LAT_Pulses(io, h, 0, 14, 0, 0);
+
+  // Register 1
+  uint8_t tail_bits = 0;
+  int tail_count = PWM_Display_Register_Send(io, h, 1, &tail_bits);
+  PWM_Display_Send_LAT_Pulses(io, h, 0, 5, tail_bits, tail_count);
+
+  // Register 2
+  tail_count = PWM_Display_Register_Send(io, h, 2, &tail_bits);
+  PWM_Display_Send_LAT_Pulses(io, h, 0, 5, tail_bits, tail_count);
+
+  // Register 3
+  tail_count = PWM_Display_Register_Send(io, h, 3, &tail_bits);
+  PWM_Display_Send_LAT_Pulses(io, h, 0, 5, tail_bits, tail_count);
+
+  // Register 4
+  tail_count = PWM_Display_Register_Send(io, h, 4, &tail_bits);
+  PWM_Display_Send_LAT_Pulses(io, h, 0, 5, tail_bits, tail_count);
+
+  // Register 5
+  tail_count = PWM_Display_Register_Send(io, h, 5, &tail_bits);
+  PWM_Display_Send_LAT_Pulses(io, h, 0, 5, tail_bits, tail_count);
+
+  FM6373_Debug("[FM6373] === Frame preamble end ===\n");
 }
 
 bool Framebuffer::SetPWMBits(uint8_t value) {
@@ -793,6 +1253,7 @@ void Framebuffer::SetPixels(int x, int y, int width, int height, Color *colors) 
     }
   }
 }
+
 // Strange LED-mappings such as RBG or so are handled here.
 gpio_bits_t Framebuffer::GetGpioFromLedSequence(char col,
                                                 const char *led_sequence,
@@ -929,6 +1390,15 @@ void Framebuffer::DumpToMatrix(GPIO *io, int pwm_low_bit) {
 
   color_clk_mask |= h.clock;
 
+  // For FM6373 panels, inject the VSYNC / EN_OP / PRE_ACT + config preamble
+  // right at the start of each frame, matching the logic capture. Add a long
+  // inter-frame pause so logic analyzers can easily spot frame boundaries.
+  if (sFM6373_Enabled) {
+    DumpToMatrixFM6373(io); // Implement this new function
+    return;
+  }
+  
+
   // Depending if we do dithering, we might not always show the lowest bits.
   const int start_bit = std::max(pwm_low_bit, kBitPlanes - pwm_bits_);
 
@@ -972,6 +1442,168 @@ void Framebuffer::DumpToMatrix(GPIO *io, int pwm_low_bit) {
       // Now switch on for the sleep time necessary for that bit-plane.
       sOutputEnablePulser->SendPulse(b);
     }
+  }
+}
+
+// --- REPLACE DumpToMatrixFM6373 IN lib/framebuffer.cc ---
+
+void Framebuffer::DumpToMatrixFM6373(GPIO *io) {
+  const HardwareMapping &h = *hardware_mapping_;
+
+  // Enable debug logging for this frame if requested via env.
+  FM6373_EnableDebugForFrameIfRequested();
+
+  // Data lines we actively drive for this FM6373 panel (one HUB75 chain)
+  const gpio_bits_t rgb_mask =
+      h.p0_r1 | h.p0_g1 | h.p0_b1 |
+      h.p0_r2 | h.p0_g2 | h.p0_b2;
+  const gpio_bits_t data_mask = rgb_mask | h.clock;
+
+  // 128-wide FM6373/DP32019B cabinet: 16 px per chip -> 8 chips.
+  // This gives 8×16-bit words between each LAT, matching the MRV412.
+  const int chips = 8;
+  const int channels = 16;   // FM6373 outputs per chip
+
+  // Make sure the hardware pulser is ready for a fixed-width OE gate.
+  FM6373_EnsureOEPulser(io, h);
+  if (sFM6373OEPulser) sFM6373OEPulser->WaitPulseFinished();
+  io->ClearBits(h.output_enable);  // idle low (polarity inverted in InitPanels)
+
+  FM6373_Debug("[FM6373] === Frame start rows=%d columns=%d ===\n",
+               double_rows_, columns_);
+
+  // Send VSYNC / EN_OP / PRE_ACT + PRAM preamble we already matched to MRV412.
+  FM6373_Init_And_Registers(io, h);
+
+  // --- Data phase: channel-major ordering, 8×16-bit words then 1-CLK LAT ---
+  for (int row = 0; row < double_rows_; ++row) {
+    // A. Select row (A..E)
+    io->ClearBits(h.clock | h.strobe | rgb_mask);
+    row_setter_->SetRowAddress(io, row);
+    FM6373_Debug("[FM6373] Row %d data shift begin\n", row);
+
+    // Start a fresh OE pattern for this row.
+    if (sFM6373OEPulser) sFM6373OEPulser->WaitPulseFinished();
+    io->ClearBits(h.output_enable);
+
+    // B. 16 FM6373 channels, from 15 down to 0 (matches FM6363/6373 docs)
+    for (int ch = channels - 1; ch >= 0; --ch) {
+
+      // 8 cascaded chips across 128 pixels, from last to first
+      for (int chip = chips - 1; chip >= 0; --chip) {
+        const int x = chip * 16 + ch;  // logical pixel index along the row
+
+        // Build 16-bit grayscale words for this (row, x)
+        uint16_t r0 = 0, g0 = 0, b0 = 0;
+        uint16_t r1 = 0, g1 = 0, b1 = 0;
+
+        for (int b = 0; b < pwm_bits_; ++b) {
+          const gpio_bits_t bits = *ValueAt(row, x, b);
+          const int out_shift = b + (16 - pwm_bits_);
+
+          if (bits & h.p0_r1) r0 |= (1 << out_shift);
+          if (bits & h.p0_g1) g0 |= (1 << out_shift);
+          if (bits & h.p0_b1) b0 |= (1 << out_shift);
+          if (bits & h.p0_r2) r1 |= (1 << out_shift);
+          if (bits & h.p0_g2) g1 |= (1 << out_shift);
+          if (bits & h.p0_b2) b1 |= (1 << out_shift);
+        }
+
+        // Shift these 16 bits MSB-first on the six RGB lines.
+        for (int bit = 15; bit >= 0; --bit) {
+          const uint16_t m = 1u << bit;
+          gpio_bits_t out = 0;
+          if (r0 & m) out |= h.p0_r1;
+          if (g0 & m) out |= h.p0_g1;
+          if (b0 & m) out |= h.p0_b1;
+          if (r1 & m) out |= h.p0_r2;
+          if (g1 & m) out |= h.p0_g2;
+          if (b1 & m) out |= h.p0_b2;
+
+          io->WriteMaskedBits(out, data_mask);
+          io->SetBits(h.clock);             // DCLK rising edge: data sampled
+          io->ClearBits(h.clock);
+        }
+      }
+
+      // C. DATA_LATCH: 1 CLK with LAT high, all data low.
+      //    Force OE low while latching.
+      io->ClearBits(h.output_enable);
+      io->ClearBits(rgb_mask);
+      io->SetBits(h.strobe);   // LE high
+      io->SetBits(h.clock);    // LE length = 1 DCLK
+      io->ClearBits(h.clock);
+      io->ClearBits(h.strobe); // LE low again
+
+      // Hardware-timed OE gate for this channel worth of data.
+      if (sFM6373OEPulser) sFM6373OEPulser->SendPulse(0);
+    }
+
+  // Optional display burst removed: rely on the fixed OE gate instead.
+  }
+
+  // Only disable one-shot debug after a full frame (preamble + data) so we see
+  // all register/tail logs on the requested passes.
+  if (!sFM6373_DebugAlways) sFM6373_DebugOnce = false;
+
+  // After all RGB data is shifted, keep clocking the address bus so panels
+  // with external mux logic (e.g. --led-multiplexing=21) see a full sweep of
+  // row addresses without re-sending color data. Only OE, CLK and ABCDE are
+  // active in this pass to avoid disturbing the latched frame.
+  if (sFM6373OEPulser) sFM6373OEPulser->WaitPulseFinished();
+  io->ClearBits(rgb_mask | h.strobe);
+  // Sweep the full 5-bit address space if E is wired so we always toggle it.
+  const int sweep_rows = (h.e ? 32 : (h.d ? 16 : (h.c ? 8 : (h.b ? 4 : 2))));
+  const gpio_bits_t row_mask = h.a | h.b | h.c | h.d | h.e;
+  for (int row = 0; row < sweep_rows; ++row) {
+    const gpio_bits_t addr_bits =
+        (row & 0x01 ? h.a : 0) |
+        (row & 0x02 ? h.b : 0) |
+        (row & 0x04 ? h.c : 0) |
+        (row & 0x08 ? h.d : 0) |
+        (row & 0x10 ? h.e : 0);
+    io->WriteMaskedBits(addr_bits, row_mask);
+    io->ClearBits(h.output_enable);
+    io->SetBits(h.clock);
+    io->ClearBits(h.clock);
+    if (sFM6373OEPulser) {
+      sFM6373OEPulser->SendPulse(0);
+      sFM6373OEPulser->WaitPulseFinished();
+    } else if (sOutputEnablePulser) {
+      sOutputEnablePulser->SendPulse(0);
+      sOutputEnablePulser->WaitPulseFinished();
+    }
+  }
+  
+}
+
+
+
+/*static*/ void Framebuffer::InitializePanels(GPIO *io,
+                                              const char *panel_type,
+                                              int columns) {
+
+  // Default: disable FM6373 mode unless explicitly selected.
+  sFM6373_Enabled = false;
+  SetHardwarePulsePolarityInverted(false);
+  if (!panel_type || panel_type[0] == '\0') return;
+  if (custom_strncasecmp(panel_type, "fm6126", 6) == 0) {
+    InitFM6126(io, *hardware_mapping_, columns);
+  }
+  else if (custom_strncasecmp(panel_type, "fm6127", 6) == 0) {
+    InitFM6127(io, *hardware_mapping_, columns);
+  }
+  else if (custom_strncasecmp(panel_type, "fm6373", 6) == 0) {
+    sFM6373_Enabled = true;  // enable preamble in DumpToMatrix()
+    FM6373_ConfigureDebugFromEnv();
+
+    // FM6373: flip OE polarity for hardware PWM pulses.
+    SetHardwarePulsePolarityInverted(true);
+
+  }
+  // else if (...) { other panel types }
+  else {
+    fprintf(stderr, "Unknown panel type '%s'; typo ?\n", panel_type);
   }
 }
 }  // namespace internal

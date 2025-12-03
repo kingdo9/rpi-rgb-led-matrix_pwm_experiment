@@ -344,7 +344,7 @@ void PrintMatrixFlags(FILE *out, const RGBMatrix::Options &d,
           "\t--led-pwm-dither-bits=<0..2> : Time dithering of lower bits "
           "(Default: 0)\n"
           "\t--led-%shardware-pulse   : %sse hardware pin-pulse generation.\n"
-          "\t--led-panel-type=<name>   : Needed to initialize special panels. Supported: 'FM6126A', 'FM6127'\n"
+          "\t--led-panel-type=<name>   : Needed to initialize special panels. Supported: 'FM6126A', 'FM6127', 'fm6373'\n"
           "\t--led-%sbusy-waiting     : %sse busy waiting when limiting refresh rate.\n",
           d.hardware_mapping,
           d.rows, d.cols, d.chain_length, d.parallel,
@@ -419,7 +419,7 @@ bool RGBMatrix::Options::Validate(std::string *err_in) const {
     success = false;
   }
 
-  if (row_address_type < 0 || row_address_type > 5) {
+  if (row_address_type < 0 || row_address_type > 6) {
     err->append("Row address type values can be 0 (default), 1 (AB addressing), 2 (direct row select), 3 (ABC address), 4 (ABC Shift + DE direct), 5 (Test row select).\n");
     success = false;
   }

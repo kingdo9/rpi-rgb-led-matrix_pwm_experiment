@@ -117,6 +117,7 @@ public:
   uint8_t brightness() { return brightness_; }
 
   void DumpToMatrix(GPIO *io, int pwm_bits_to_show);
+  void DumpToMatrixFM6373(GPIO *io); 
 
   void Serialize(const char **data, size_t *len) const;
   bool Deserialize(const char *data, size_t len);

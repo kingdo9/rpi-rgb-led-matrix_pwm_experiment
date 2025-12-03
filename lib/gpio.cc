@@ -124,6 +124,9 @@ static volatile uint32_t *s_Timer1Mhz = NULL;
 static volatile uint32_t *s_PWM_registers = NULL;
 static volatile uint32_t *s_CLK_registers = NULL;
 
+// If true, invert the hardware PWM OE polarity (used for FM6373).
+static bool s_pwm_invert_polarity = false;
+
 namespace rgb_matrix {
 static bool LinuxHasModuleLoaded(const char *name) {
   FILE *f = fopen("/proc/modules", "r");
@@ -749,7 +752,13 @@ public:
     sleep_hint_us_ = sleep_hints_us_[c];
     start_time_ = *s_Timer1Mhz;
     triggered_ = true;
-    s_PWM_registers[PWM_CTL] = PWM_CTL_USEF1 | PWM_CTL_PWEN1 | PWM_CTL_POLA1;
+    uint32_t ctl = PWM_CTL_USEF1 | PWM_CTL_PWEN1;
+    if (!s_pwm_invert_polarity) {
+      // Original behaviour: negative pulse (idle high, pulse low)
+      ctl |= PWM_CTL_POLA1;
+    }
+    // If s_pwm_invert_polarity == true, we *omit* POLA1, flipping polarity.
+    s_PWM_registers[PWM_CTL] = ctl;    
   }
 
   virtual void WaitPulseFinished() {
@@ -786,7 +795,13 @@ public:
     while ((s_PWM_registers[PWM_STA] & PWM_STA_EMPT1) == 0) {
       // busy wait until done.
     }
-    s_PWM_registers[PWM_CTL] = PWM_CTL_USEF1 | PWM_CTL_POLA1 | PWM_CTL_CLRF1;
+
+    uint32_t ctl = PWM_CTL_USEF1 | PWM_CTL_CLRF1;
+    if (!s_pwm_invert_polarity) {
+      // Original behaviour: keep POLA1 when not inverted.
+      ctl |= PWM_CTL_POLA1;
+    }
+    s_PWM_registers[PWM_CTL] = ctl;
     triggered_ = false;
   }
 
@@ -800,7 +815,13 @@ private:
   void InitPWMDivider(uint32_t divider) {
     assert(divider < (1<<12));  // we only have 12 bits.
 
-    s_PWM_registers[PWM_CTL] = PWM_CTL_USEF1 | PWM_CTL_POLA1 | PWM_CTL_CLRF1;
+    // Disable PWM, clear FIFO.
+    uint32_t ctl = PWM_CTL_USEF1 | PWM_CTL_CLRF1;
+    if (!s_pwm_invert_polarity) {
+      ctl |= PWM_CTL_POLA1;
+    }
+    s_PWM_registers[PWM_CTL] = ctl;
+    Timers::sleep_nanos(10 * 1000);
 
     // reset PWM clock
     s_CLK_registers[CLK_PWMCTL] = CLK_PASSWD | CLK_CTL_KILL;
@@ -827,6 +848,11 @@ private:
 };
 
 } // end anonymous namespace
+
+// NEW: control polarity of hardware PWM OE pulses.
+void SetHardwarePulsePolarityInverted(bool inverted) {
+  s_pwm_invert_polarity = inverted;
+}
 
 // Public PinPulser factory
 PinPulser *PinPulser::Create(GPIO *io, gpio_bits_t gpio_mask,
@@ -856,6 +882,18 @@ uint32_t GetMicrosecondCounter() {
 // For external use, e.g. to lessen busy waiting.
 void SleepMicroseconds(long t) {
   Timers::sleep_nanos(t * 1000);
+}
+
+void GPIO::ForceOutput(gpio_bits_t bits) {
+  if (s_GPIO_registers == NULL) return;
+
+  // Iterate over bits (0 to 31 for standard Pi header)
+  for (int b = 0; b < 32; ++b) {
+    if (bits & (1ull << b)) {
+      INP_GPIO(b); // Set to Input first (clears FSEL bits to 000)
+      OUT_GPIO(b); // Set to Output (sets FSEL bits to 001)
+    }
+  }
 }
 
 } // namespace rgb_matrix
