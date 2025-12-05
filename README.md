@@ -25,10 +25,10 @@ make -j4 build-python PYTHON=$(which python3)
 make install-python PYTHON=$(which python3)
 ```
 
-This is what I use to run. **Pi4 needs --led-slowdown-gpio=7  - Zero2 W and 3 would probably only need a slowdown of 2.**
+This is what I use to run. **Pi4 needs --led-slowdown-gpio=1 - Zero2 W and 3 would probably only need a slowdown of 2.**
 
 ```
-python3 ./test.py --led-rows=64 --led-cols=128 --led-gpio-mapping=adafruit-hat-pwm --led-brightness=50 --led-slowdown-gpio=7 --led-pwm-bits=11 --led-pwm-lsb-nanoseconds=110 --led-row-addr-type=6 --led-panel-type=fm6373 --led-multiplexing=21
+python3 ./test.py --led-rows=64 --led-cols=128 --led-gpio-mapping=adafruit-hat-pwm --led-brightness=50 --led-slowdown-gpio=7 --led-pwm-bits=11 --led-pwm-lsb-nanoseconds=110 --led-row-addr-type=6 --led-panel-type=fm6373 
 ```
 
 <br>

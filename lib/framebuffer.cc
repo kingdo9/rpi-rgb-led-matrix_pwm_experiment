@@ -813,15 +813,49 @@ static inline void FM6373_SetRowBits(GPIO *io,
   { (value), (value), (value), (value), (value), (value), (value), (value) }
 
 static const uint16_t register_block_1[] = {
-  0x0040,  // header
   0x00AA, 0x00AA, 0x00AA, 0x00AA,
   0x00AA, 0x00AA, 0x00AA, 0x00AA
 };
 
 static const uint16_t register_block_2[] = FM6373_REPEAT8(0x01AA);
-static const uint16_t register_block_3[] = FM6373_REPEAT8(0xF400);
 static const uint16_t register_block_4[] = FM6373_REPEAT8(0x0055);
 static const uint16_t register_block_5[] = FM6373_REPEAT8(0x0155);
+static uint16_t register_block_3[] = FM6373_REPEAT8(0x0000);
+
+// Current frame index for Register 3 rotation
+static size_t sFM6373_Block3SequenceIndex = 0;
+
+// Defined separate arrays for R, G, and B. 
+// These must all be the same length.
+static const uint16_t k_fm6373_block3_seq_R[] = {
+  0x0000, 0x0100, 0x021f, 0x033f, 0x0402, 0x0508, 0x0602, 0x0720,
+  0x0820, 0x0900, 0x0a00, 0x0b00, 0x0c01, 0x0d01, 0x0e04, 0x0f01,
+  0x10c2, 0x1121, 0x1201, 0x1300, 0x1400, 0x1500, 0x1600, 0x17f0,
+  0x181f, 0x1900, 0x1a1f, 0x1b10, 0x1c2a, 0x1d0a, 0x1e42, 0x1f04,
+  0x2008, 0x2101, 0x221c, 0x7000, 0x7100, 0x7200, 0x7300, 0x7400,
+  0xf000, 0xf100, 0xf200, 0xf300, 0xf400, 0xf500, 0x2300,
+};
+
+
+static const uint16_t k_fm6373_block3_seq_G[] = {
+  // Replace with your Green channel values
+  0x0000, 0x0100, 0x021f, 0x033f, 0x0402, 0x0508, 0x0602, 0x0720,
+  0x0820, 0x0900, 0x0a00, 0x0b00, 0x0c08, 0x0d01, 0x0e04, 0x0f01,
+  0x10c2, 0x1121, 0x1201, 0x1300, 0x1400, 0x1500, 0x1600, 0x17f0,
+  0x181f, 0x1950, 0x1a1f, 0x1b10, 0x1c2a, 0x1d0a, 0x1e46, 0x1f20,
+  0x2008, 0x2101, 0x221c, 0x7000, 0x7100, 0x7200, 0x7300, 0x7400,
+  0xf000, 0xf100, 0xf200, 0xf300, 0xf400, 0xf500, 0x2300,
+};
+
+static const uint16_t k_fm6373_block3_seq_B[] = {
+  // Replace with your Blue channel values
+  0x0000, 0x0100, 0x021f, 0x033f, 0x0402, 0x0508, 0x0602, 0x0720,
+  0x0820, 0x0900, 0x0a00, 0x0b00, 0x0c08, 0x0d01, 0x0e04, 0x0f01,
+  0x10c2, 0x1121, 0x1201, 0x1300, 0x1400, 0x1500, 0x1600, 0x17f0,
+  0x182f, 0x1900, 0x1a1f, 0x1b10, 0x1c2a, 0x1d0a, 0x1e48, 0x1f20,
+  0x2010, 0x2101, 0x221c, 0x7000, 0x7100, 0x7200, 0x7300, 0x7400,
+  0xf000, 0xf100, 0xf200, 0xf300, 0xf400, 0xf500, 0x2300,
+};
 
 #undef FM6373_REPEAT8
 
@@ -1026,6 +1060,132 @@ static int PWM_Display_Register_Send(GPIO *io,
 }
 
 
+// Shift 'bit_count' MSBs out, but using distinct values for R, G, and B lines.
+static inline void ShiftMSBFirst_RGB(GPIO *io,
+                                     const HardwareMapping &h,
+                                     gpio_bits_t mask_r,
+                                     gpio_bits_t mask_g,
+                                     gpio_bits_t mask_b,
+                                     uint16_t val_r,
+                                     uint16_t val_g,
+                                     uint16_t val_b,
+                                     int bit_count) {
+  if (bit_count <= 0) return;
+  if (bit_count > 16) bit_count = 16;
+  
+  // Combine all for clocking
+  const gpio_bits_t mask_all = mask_r | mask_g | mask_b;
+
+  for (int bit = 15; bit >= 16 - bit_count; --bit) {
+    gpio_bits_t out = 0;
+    const uint16_t bit_mask = (1 << bit);
+    
+    if (val_r & bit_mask) out |= mask_r;
+    if (val_g & bit_mask) out |= mask_g;
+    if (val_b & bit_mask) out |= mask_b;
+
+    io->WriteMaskedBits(out, mask_all);
+    io->SetBits(h.clock);
+    io->ClearBits(h.clock);
+  }
+}
+
+// Pulse LAT, but allow distinct tail-bit patterns for R, G, and B.
+static void PWM_Display_Send_LAT_Pulses_RGB(GPIO *io,
+                                            const HardwareMapping &h,
+                                            uint8_t row,
+                                            int pulses,
+                                            uint8_t pat_r,
+                                            uint8_t pat_g,
+                                            uint8_t pat_b,
+                                            int pattern_bit_count) {
+                                            
+  const gpio_bits_t mask_r = h.p0_r1 | h.p0_r2 | h.p1_r1 | h.p1_r2; 
+  const gpio_bits_t mask_g = h.p0_g1 | h.p0_g2 | h.p1_g1 | h.p1_g2; 
+  const gpio_bits_t mask_b = h.p0_b1 | h.p0_b2 | h.p1_b1 | h.p1_b2; 
+  const gpio_bits_t mask_all = mask_r | mask_g | mask_b;
+
+  io->ClearBits(mask_all);
+  io->ClearBits(h.strobe);
+  io->ClearBits(h.clock);         
+  io->SetBits(h.strobe);  // LAT high
+
+  if (pattern_bit_count > 0) {
+    const int total = (pattern_bit_count > pulses) ? pattern_bit_count : pulses;
+    for (int i = 0; i < total; ++i) {
+      const int bit_index = pattern_bit_count - 1 - i;
+      gpio_bits_t out = 0;
+
+      if (bit_index >= 0) {
+        if ((pat_r >> bit_index) & 0x01) out |= mask_r;
+        if ((pat_g >> bit_index) & 0x01) out |= mask_g;
+        if ((pat_b >> bit_index) & 0x01) out |= mask_b;
+      }
+
+      io->WriteMaskedBits(out, mask_all);
+      io->SetBits(h.clock);
+      io->ClearBits(h.clock);
+    }
+  } else {
+    for (int i = 0; i < pulses; ++i) {
+      io->SetBits(h.clock);
+      io->ClearBits(h.clock);
+    }
+  }
+
+  io->ClearBits(h.strobe);
+  io->SetBits(h.clock);
+  FM6373_SetRowBits(io, h, row);
+}
+
+// Specialized sender for Register 3 that pulls from the 3 separate RGB arrays.
+static void FM6373_Send_Register3_RGB(GPIO *io, const HardwareMapping &h) {
+  // Get current frame values
+  const size_t seq_len = sizeof(k_fm6373_block3_seq_R) / sizeof(uint16_t);
+  const uint16_t val_r = k_fm6373_block3_seq_R[sFM6373_Block3SequenceIndex];
+  const uint16_t val_g = k_fm6373_block3_seq_G[sFM6373_Block3SequenceIndex];
+  const uint16_t val_b = k_fm6373_block3_seq_B[sFM6373_Block3SequenceIndex];
+
+  // Advance index
+  sFM6373_Block3SequenceIndex = (sFM6373_Block3SequenceIndex + 1) % seq_len;
+
+  FM6373_Debug("[FM6373] Reg3 RGB frame=%zu R=0x%04x G=0x%04x B=0x%04x\n",
+               sFM6373_Block3SequenceIndex, val_r, val_g, val_b);
+
+  // Masks
+  const gpio_bits_t mask_r = h.p0_r1 | h.p0_r2 | h.p1_r1 | h.p1_r2; 
+  const gpio_bits_t mask_g = h.p0_g1 | h.p0_g2 | h.p1_g1 | h.p1_g2; 
+  const gpio_bits_t mask_b = h.p0_b1 | h.p0_b2 | h.p1_b1 | h.p1_b2; 
+  const gpio_bits_t mask_all = mask_r | mask_g | mask_b;
+
+  // Prep bus
+  io->ClearBits(h.strobe);
+  io->ClearBits(h.clock);
+  io->ClearBits(mask_all);
+
+  // 1. Send first 7 words (Full 16 bits)
+  for (int i = 0; i < 7; ++i) {
+    ShiftMSBFirst_RGB(io, h, mask_r, mask_g, mask_b, val_r, val_g, val_b, 16);
+  }
+
+  // 2. Send 8th word (Partial 11 bits)
+  // Register 3 is configured as partial (11 bits shift, 5 bits tail)
+  ShiftMSBFirst_RGB(io, h, mask_r, mask_g, mask_b, val_r, val_g, val_b, 11);
+
+  // 3. Calculate distinct tail bits (lower 5 bits)
+  uint8_t tail_r = static_cast<uint8_t>(val_r & 0x1F);
+  uint8_t tail_g = static_cast<uint8_t>(val_g & 0x1F);
+  uint8_t tail_b = static_cast<uint8_t>(val_b & 0x1F);
+
+  // Leave data lines low
+  io->ClearBits(mask_all);
+  io->ClearBits(h.clock);
+
+  // 4. Send Latch Pulse with encoded tails
+  PWM_Display_Send_LAT_Pulses_RGB(io, h, 0, 5, tail_r, tail_g, tail_b, 5);
+}
+
+
 // Frame-level preamble for FM6373:
 //   row 0, LE=3   (VSYNC-like)
 //   row 0, LE=11  (EN_OP-like)
@@ -1039,29 +1199,29 @@ static int PWM_Display_Register_Send(GPIO *io,
 static void FM6373_Init_And_Registers(GPIO *io, const HardwareMapping &h) {
   FM6373_Debug("[FM6373] === Frame preamble start ===\n");
 
+  // The index update happens inside FM6373_Send_Register3_RGB.
   // Row 0 command pulses: VSYNC / EN_OP / PRE_ACT equivalents.
   PWM_Display_Send_LAT_Pulses(io, h, 0, 3, 0, 0);
   PWM_Display_Send_LAT_Pulses(io, h, 0, 11, 0, 0);
   PWM_Display_Send_LAT_Pulses(io, h, 0, 14, 0, 0);
 
-  // Register 1
+  // Register 1 - Prefix
   uint8_t tail_bits = 0;
   int tail_count = PWM_Display_Register_Send(io, h, 1, &tail_bits);
   PWM_Display_Send_LAT_Pulses(io, h, 0, 5, tail_bits, tail_count);
 
-  // Register 2
+  // Register 2 - Prefix
   tail_count = PWM_Display_Register_Send(io, h, 2, &tail_bits);
   PWM_Display_Send_LAT_Pulses(io, h, 0, 5, tail_bits, tail_count);
 
-  // Register 3
-  tail_count = PWM_Display_Register_Send(io, h, 3, &tail_bits);
-  PWM_Display_Send_LAT_Pulses(io, h, 0, 5, tail_bits, tail_count);
+  // Register 3 - NOW USES SPECIALIZED RGB FUNCTION - Only value that changes
+  FM6373_Send_Register3_RGB(io, h);
 
-  // Register 4
+  // Register 4 - Suffix
   tail_count = PWM_Display_Register_Send(io, h, 4, &tail_bits);
   PWM_Display_Send_LAT_Pulses(io, h, 0, 5, tail_bits, tail_count);
 
-  // Register 5
+  // Register 5 - Suffix
   tail_count = PWM_Display_Register_Send(io, h, 5, &tail_bits);
   PWM_Display_Send_LAT_Pulses(io, h, 0, 5, tail_bits, tail_count);
 
