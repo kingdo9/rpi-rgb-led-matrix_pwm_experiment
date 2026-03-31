@@ -734,9 +734,10 @@ void spwm_send_register(GPIO *io, const HardwareMapping &h,
   spwm_end_register_stream(io, h, spwm_row);
 }
 
-// Shift the rotating RGB register block used once per frame by panels such as
-// the FM6373, then emit any extra LAT postamble clocks for that slot.
-// Purpose: Shift the rotating FM6373 RGB control register for the current frame.
+// Shift the rotating RGB register block used once per frame by FM6373-style
+// panels, then emit any extra LAT postamble clocks for that slot.
+// Purpose: Shift the active panel's rotating RGB control register for the
+// current frame.
 // Inputs: GPIO interface, hardware mapping, 1-based register index, row bits.
 // Outputs: None.
 // Side effects: Advances the RGB register sequence and drives GPIO lines.
@@ -2046,7 +2047,7 @@ void spwm_wait_until_initial_oe_pulse_target() {
 // ---------------------
 // Emit one complete SPWM frame: init sequence, leading OE burst, RGB upload,
 // post-upload scanning, row-wrap alignment, and optional end-of-frame delay.
-// Purpose: Emit one complete SPWM frame for FM6373/FM6363 class panels.
+// Purpose: Emit one complete SPWM frame for supported SPWM panel profiles.
 // Inputs: GPIO interface, hardware mapping, row setter, and prepared bitplanes.
 // Outputs: None.
 // Side effects: Drives the full init/upload/free-run frame timing on GPIO lines.
@@ -2100,8 +2101,9 @@ void spwm_dump_to_matrix(GPIO *io, const HardwareMapping &h,
                                     spwm_get_oe_during_upload_clk_count(),
                                     true);
 
-  // Start the frame with the panel-specific init script. FM6373 uses a simple
-  // direct-row init sequence, while FM6363 adds per-register LAT postambles.
+  // Start the frame with the panel-specific init script. FM6373-style panels
+  // use a simple direct-row init sequence, while FM6363 adds per-register LAT
+  // postambles.
   io->ClearBits(h.output_enable);
   spwm_emit_init_sequence(io, h);
 

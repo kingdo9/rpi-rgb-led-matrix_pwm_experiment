@@ -78,7 +78,10 @@ SPWM panels currently supported by this tree:
 
 - FM6363 + DP32020A shift-register row selection: \
   `--led-panel-type=fm6363 --led-spwm-row-addr-type=1`
+<br>
 
+- SM16380SH \
+  `--led-panel-type=sm16380sh --led-spwm-row-addr-type=0`
 <br>
 
 [SPWM Tuning Guide](./spwm.md)

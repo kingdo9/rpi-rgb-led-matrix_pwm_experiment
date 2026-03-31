@@ -87,7 +87,7 @@ struct SPWM_Register_Data {
   SPWM_Register_Timing timing;
 };
 
-// One R/G/B word triple emitted by the rotating FM6373 RGB register block.
+// One R/G/B word triple emitted by a panel's rotating RGB register block.
 struct SPWM_RGB_Frame {
   uint16_t r;
   uint16_t g;
@@ -112,7 +112,7 @@ class SPWM_Config {
   void spwm_add_register(size_t spwm_register_index,
                          const std::vector<uint16_t> &spwm_words,
                          const SPWM_Register_Timing *spwm_timing = nullptr);
-  // Store the rotating RGB register block used by panels such as the FM6373.
+  // Store the rotating RGB register block used by FM6373-style panels.
   void spwm_add_rgb_register(
       size_t spwm_register_index,
       const std::array<std::vector<uint16_t>, 3> &spwm_channel_sequences,

@@ -11,10 +11,13 @@ nano /boot/firmware/cmdline.txt
 Also it is highly recommended to **ensure you are running with a Real Time kernel.**
 [Real Time Kernel Setup Guide](/RT-kernel/README.md)
 
-Currently supported and tested displays, combinations might work.
+Currently supported SPWM profiles. The first two have been tested; `SM16380SH`
+support is based on captured register data and may still need panel-specific
+tuning.
 
 FM6373 / DP32019B - 128x64 \
-FM6363 / DP32020A - 128x64
+FM6363 / DP32020A - 128x64 \
+SM16380SH - 128x64
 
 [Further discussion for SPWM panels](https://github.com/hzeller/rpi-rgb-led-matrix/issues/1866).
 
@@ -48,6 +51,10 @@ Pi 4 - FM6373 / DP32019B 128x64 Example
 Pi 4 - FM6363 / DP32020A 128x64 Example
 
     taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix/examples-api-use/demo -D4 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=adafruit-hat-pwm --led-brightness=50 --led-slowdown-gpio=5 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=fm6363 --led-spwm-row-addr-type=1
+
+Pi 4 - SM16380SH 128x64 Example
+
+    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix/examples-api-use/demo -D8 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=adafruit-hat-pwm --led-brightness=50 --led-slowdown-gpio=5 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=sm16380sh --led-spwm-row-addr-type=0
 
 Pi 3 - FM6373 / DP32020A 128x64 Example
 

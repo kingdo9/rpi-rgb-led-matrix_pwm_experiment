@@ -211,6 +211,115 @@ SPWM_Config spwm_create_fm6373_config(const SPWM_Panel_Settings &spwm_settings,
 }
 
 // -------------------------------------------------------------------------------------------------
+// SM16380SH profile definition.
+// This stays close to the FM6373 upload path but uses a shorter init script,
+// one extra fixed register, and a different leading-OE length.
+// -------------------------------------------------------------------------------------------------
+
+static const size_t SPWM_SM16380SH_REGISTER_COUNT = 6;
+static const uint8_t SPWM_SM16380SH_REGISTER_SEND_LAT[][1] = {
+    {5},
+    {5},
+    {5},
+    {5},
+    {5},
+    {5},
+};
+static const SPWM_Register_Timing SPWM_SM16380SH_REGISTER_TIMINGS[] = {
+    spwm_make_register_timing(SPWM_SM16380SH_REGISTER_SEND_LAT[0]),
+    spwm_make_register_timing(SPWM_SM16380SH_REGISTER_SEND_LAT[1]),
+    spwm_make_register_timing(SPWM_SM16380SH_REGISTER_SEND_LAT[2]),
+    spwm_make_register_timing(SPWM_SM16380SH_REGISTER_SEND_LAT[3]),
+    spwm_make_register_timing(SPWM_SM16380SH_REGISTER_SEND_LAT[4]),
+    spwm_make_register_timing(SPWM_SM16380SH_REGISTER_SEND_LAT[5]),
+};
+
+static const SPWM_Panel_Settings SPWM_SM16380SH_SETTINGS = []() {
+  SPWM_Panel_Settings spwm_settings = spwm_make_default_panel_settings();
+  spwm_settings.first_oe_clk_length = 10;  
+  spwm_settings.end_of_frame_extra_row_cycles = 27;
+  spwm_settings.oe_clk_look_behind = 16;
+  return spwm_settings;
+}();
+static const uint16_t SPWM_SM16380SH_REGISTER1_WORD = 0x00AA;
+static const uint16_t SPWM_SM16380SH_REGISTER2_WORD = 0x01AA;
+static const uint16_t SPWM_SM16380SH_REGISTER4_WORD = 0xF003;
+static const uint16_t SPWM_SM16380SH_REGISTER5_WORD = 0x0055;
+static const uint16_t SPWM_SM16380SH_REGISTER6_WORD = 0x0155;
+
+// Register block 3 carries the per-frame RGB control words captured for the
+// SM16380SH panel. Each new frame advances one entry in the R/G/B sequences
+// below.
+static const uint16_t SPWM_SM16380SH_BLOCK3_SEQ_R[] = {
+    0x0000, 0x021f, 0x0300, 0x0400, 0x0500, 0x0600, 0x0750, 0x0800, 0x0900,
+    0x0a02, 0x0b0c, 0x0c08, 0x0d00, 0x0e05, 0x0f00, 0x1000, 0x1100, 0x1200,
+    0x1300, 0x1414, 0x1500, 0x1630, 0x1700, 0x1801, 0x1904, 0x1a03, 0x1b14,
+    0x1c12, 0x1d00, 0x1e00, 0x1f0c, 0x2000, 0x2200,
+};
+
+static const uint16_t SPWM_SM16380SH_BLOCK3_SEQ_G[] = {
+    0x0000, 0x021f, 0x0300, 0x0400, 0x0500, 0x0600, 0x0751, 0x0800, 0x0900,
+    0x0a02, 0x0b0c, 0x0c18, 0x0d00, 0x0e05, 0x0f00, 0x1000, 0x1100, 0x1200,
+    0x1300, 0x1422, 0x1500, 0x1630, 0x1700, 0x1801, 0x1903, 0x1a01, 0x1b14,
+    0x1c8f, 0x1d00, 0x1e00, 0x1f0c, 0x2000, 0x2200,
+};
+
+static const uint16_t SPWM_SM16380SH_BLOCK3_SEQ_B[] = {
+    0x0000, 0x021f, 0x0300, 0x0400, 0x0500, 0x0600, 0x0753, 0x0800, 0x0900,
+    0x0a02, 0x0b0c, 0x0c30, 0x0d00, 0x0e05, 0x0f00, 0x1000, 0x1100, 0x1200,
+    0x1300, 0x1432, 0x1500, 0x1630, 0x1700, 0x1801, 0x1903, 0x1a01, 0x1b14,
+    0x1c8f, 0x1d00, 0x1e00, 0x1f0c, 0x2000, 0x2200,
+};
+
+// SM16380SH frame start: emit LAT bursts of 3 and 14 clocks, then stream
+// register blocks 1-6 with block 3 coming from the rotating RGB register
+// sequence above.
+static const SPWM_Init_Step SPWM_SM16380SH_INIT_STEPS[] = {
+    {SPWM_INIT_STEP_LAT_PULSES, 3, 0},
+    {SPWM_INIT_STEP_LAT_PULSES, 14, 0},
+    {SPWM_INIT_STEP_REGISTER, 1, 0},
+    {SPWM_INIT_STEP_REGISTER, 2, 0},
+    {SPWM_INIT_STEP_RGB_REGISTER, 3, 0},
+    {SPWM_INIT_STEP_REGISTER, 4, 0},
+    {SPWM_INIT_STEP_REGISTER, 5, 0},
+    {SPWM_INIT_STEP_REGISTER, 6, 0},
+};
+
+static const SPWM_Init_Sequence SPWM_SM16380SH_INIT_SEQUENCE =
+    spwm_make_init_sequence(SPWM_SM16380SH_INIT_STEPS);
+
+// Purpose: Build the SM16380SH register layout for the active panel width.
+// Inputs: Panel timing/settings and the resolved column count.
+// Outputs: A runtime register bundle with repeated fixed words and RGB sequence data.
+// Side effects: None.
+SPWM_Config spwm_create_sm16380sh_config(
+    const SPWM_Panel_Settings &spwm_settings, int spwm_columns) {
+  SPWM_Config spwm_config(SPWM_SM16380SH_REGISTER_COUNT,
+                          SPWM_SM16380SH_REGISTER_TIMINGS[0],
+                          spwm_resolve_register_repeat_count(spwm_settings,
+                                                             spwm_columns));
+
+  spwm_config.spwm_add_register(1, {SPWM_SM16380SH_REGISTER1_WORD},
+                                &SPWM_SM16380SH_REGISTER_TIMINGS[0]);
+  spwm_config.spwm_add_register(2, {SPWM_SM16380SH_REGISTER2_WORD},
+                                &SPWM_SM16380SH_REGISTER_TIMINGS[1]);
+  spwm_config.spwm_add_rgb_register(
+      3,
+      {spwm_make_words(SPWM_SM16380SH_BLOCK3_SEQ_R),
+       spwm_make_words(SPWM_SM16380SH_BLOCK3_SEQ_G),
+       spwm_make_words(SPWM_SM16380SH_BLOCK3_SEQ_B)},
+      SPWM_SM16380SH_REGISTER_TIMINGS[2]);
+  spwm_config.spwm_add_register(4, {SPWM_SM16380SH_REGISTER4_WORD},
+                                &SPWM_SM16380SH_REGISTER_TIMINGS[3]);
+  spwm_config.spwm_add_register(5, {SPWM_SM16380SH_REGISTER5_WORD},
+                                &SPWM_SM16380SH_REGISTER_TIMINGS[4]);
+  spwm_config.spwm_add_register(6, {SPWM_SM16380SH_REGISTER6_WORD},
+                                &SPWM_SM16380SH_REGISTER_TIMINGS[5]);
+
+  return spwm_config;
+}
+
+// -------------------------------------------------------------------------------------------------
 // FM6363 profile definition.
 // FM6363 uses the DP32020A-style shift-register receiver, so register uploads
 // carry longer, per-register LAT timing. Its default OE profile also expects
@@ -305,6 +414,10 @@ static const SPWM_Panel_Profile SPWM_PANEL_PROFILES[] = {
      SPWM_FM6373_SETTINGS,
      spwm_create_fm6373_config,
      SPWM_FM6373_INIT_SEQUENCE},
+    {"sm16380sh",
+     SPWM_SM16380SH_SETTINGS,
+     spwm_create_sm16380sh_config,
+     SPWM_SM16380SH_INIT_SEQUENCE},
     {"fm6363",
      SPWM_FM6363_SETTINGS,
      spwm_create_fm6363_config,
