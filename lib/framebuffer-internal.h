@@ -97,6 +97,7 @@ public:
   Framebuffer(int rows, int columns, int parallel,
               int scan_mode,
               const char* led_sequence, bool inverse_color,
+              bool allow_large_spwm_rows,
               PixelDesignatorMap **mapper);
   ~Framebuffer();
 
@@ -110,7 +111,8 @@ public:
                        int row_address_type,
                        int spwm_row_address_type);
   static void InitializePanels(GPIO *io, const char *panel_type, int columns,
-                               int spwm_row_address_type);
+                               int spwm_row_address_type,
+                               int spwm_scan_rows);
 
   // Set PWM bits used for output. Default is 11, but if you only deal with
   // simple comic-colors, 1 might be sufficient. Lower require less CPU.
@@ -161,10 +163,10 @@ private:
                              PixelDesignator *designator);
   inline void  MapColors(uint8_t r, uint8_t g, uint8_t b,
                          uint16_t *red, uint16_t *green, uint16_t *blue);
-  const int rows_;     // Number of rows. 16 or 32.
+  const int rows_;     // Number of physical rows in one panel.
   const int parallel_; // Parallel rows of chains. 1 or 2.
   const int height_;   // rows * parallel
-  const int columns_;  // Number of columns. Number of chained boards * 32.
+  const int columns_;  // Total physical columns across the chained panels.
 
   const int scan_mode_;
   const bool inverse_color_;

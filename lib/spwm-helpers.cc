@@ -175,6 +175,7 @@ struct SPWM_OE_Gate_State {
 struct SPWM_Scan_Config {
   int row_clks;
   int advance_phase;
+  int oe_arm_phase;
   int oe_clks;
   bool skip_first_oe;
   bool row_before_oe;
@@ -184,6 +185,11 @@ struct SPWM_Scan_State {
   int row;
   int phase;
   bool oe_primed;
+  // True only on the scan step that wrapped from the last logical row back to
+  // row 0. Shift-register row-address types 1 and 2 use this to emit Channel C
+  // only on the real end-of-scan wrap pulse, not on the initial row-0 pulse at
+  // frame start.
+  bool wrapped_to_row_zero;
   gpio_bits_t shiftreg_row_bits;
   bool shiftreg_row_bits_valid;
 };
@@ -231,6 +237,26 @@ SPWM_Config spwm_create_initial_config() {
       spwm_default_profile.settings.default_columns);
 }
 
+// Convert one physical shift-clock slot back to a visible framebuffer column.
+// Panels such as 172-wide ICND1065L still shift through unconnected positions
+// inside a wider physical chain, so those slots must stay blank.
+int spwm_map_physical_column_to_visible(
+    int spwm_physical_column, const SPWM_Panel_Settings &spwm_settings) {
+  int spwm_visible_column = spwm_physical_column;
+  const int spwm_gap_count = std::max(
+      0, std::min(spwm_settings.missing_column_count,
+                  SPWM_Panel_Settings::kMaxMissingColumnSlots));
+  for (int spwm_gap = 0; spwm_gap < spwm_gap_count; ++spwm_gap) {
+    const int spwm_missing_column =
+        spwm_settings.missing_column_positions[spwm_gap];
+    if (spwm_physical_column == spwm_missing_column) return -1;
+    if (spwm_physical_column > spwm_missing_column) {
+      --spwm_visible_column;
+    }
+  }
+  return spwm_visible_column;
+}
+
 // Return the init sequence associated with the default panel profile.
 SPWM_Init_Sequence spwm_get_initial_init_sequence() {
   return spwm_get_default_panel_profile().init_sequence;
@@ -240,6 +266,8 @@ struct SPWM_Runtime_State {
   SPWM_Runtime_State()
       : config(spwm_create_initial_config()),
         active_parallel_chains(1),
+        row_address_type(SPWM_ROW_ADDRESS_TYPE_0_DIRECT_AE),
+        scan_rows(0),
         enabled(false),
         init_sequence(spwm_get_initial_init_sequence()),
         last_initial_oe_start_ns(0),
@@ -248,6 +276,8 @@ struct SPWM_Runtime_State {
 
   SPWM_Config config;
   int active_parallel_chains;
+  int row_address_type;
+  int scan_rows;
   bool enabled;
   SPWM_Init_Sequence init_sequence;
   uint64_t last_initial_oe_start_ns;
@@ -327,22 +357,6 @@ void spwm_apply_bool_env_override(const char *spwm_env_name,
   int spwm_parsed_value = 0;
   if (spwm_parse_env_int(spwm_env_name, &spwm_parsed_value)) {
     *spwm_value = (spwm_parsed_value != 0);
-  }
-}
-
-// Apply the shared defaults for the selected SPWM row-address transport.
-void spwm_apply_row_address_type_defaults(int spwm_row_address_type,
-                                          SPWM_Panel_Settings *spwm_settings) {
-  if (spwm_settings == nullptr) return;
-
-  switch (spwm_row_address_type) {
-    case SPWM_ROW_ADDRESS_TYPE_1_SHIFTREG_BLANK_CLOCK:
-      spwm_settings->shiftreg_row_select_a_pulse_clk_count = 2;
-      spwm_settings->shiftreg_row_select_a_pulse_start_clk = 0;
-      spwm_settings->shiftreg_row_select_a_pulse_centered = true;
-      break;
-    default:
-      break;
   }
 }
 
@@ -660,9 +674,11 @@ void spwm_send_register_extra_lat_clocks(
   }
 }
 
-// Emit a LAT-high clock burst used by panel-specific init sequences.
+// Emit a LAT-high clock burst used by panel-specific init sequences, followed
+// by any requested LAT-low spacer clocks before leaving the row lines idle.
 void spwm_send_lat_pulses(GPIO *io, const HardwareMapping &h,
-                          uint8_t spwm_row, int spwm_pulses) {
+                          uint8_t spwm_row, int spwm_pulses,
+                          int spwm_space_clocks) {
   const SPWM_Register_Output_Masks spwm_masks =
       spwm_get_register_output_masks(h);
 
@@ -679,6 +695,12 @@ void spwm_send_lat_pulses(GPIO *io, const HardwareMapping &h,
   }
 
   io->ClearBits(h.strobe);
+  for (int spwm_clock_index = 0;
+       spwm_clock_index < spwm_space_clocks;
+       ++spwm_clock_index) {
+    io->SetBits(h.clock);
+    io->ClearBits(h.clock);
+  }
   io->SetBits(h.clock);
   spwm_set_row_bits(io, h, spwm_row);
 }
@@ -804,7 +826,8 @@ void spwm_emit_init_sequence(GPIO *io, const HardwareMapping &h) {
         spwm_runtime_state.init_sequence.steps[spwm_step_index];
     switch (spwm_step.type) {
       case SPWM_INIT_STEP_LAT_PULSES:
-        spwm_send_lat_pulses(io, h, spwm_step.row, spwm_step.value);
+        spwm_send_lat_pulses(io, h, spwm_step.row, spwm_step.value,
+                             spwm_step.space_clocks);
         break;
       case SPWM_INIT_STEP_REGISTER:
         spwm_send_register(io, h, spwm_step.value, spwm_step.row);
@@ -926,22 +949,36 @@ void spwm_clock_pulse(GPIO *io, const HardwareMapping &h,
                       gpio_bits_t spwm_out_bits,
                       gpio_bits_t spwm_write_mask,
                       SPWM_OE_Gate_State *spwm_gate) {
-  io->WriteMaskedBits(spwm_out_bits, spwm_write_mask);
-
   if (spwm_gate != nullptr && spwm_gate->remaining > 0 && !spwm_gate->active) {
     spwm_gate->active = true;
     if (spwm_gate->capture_start_time) {
       spwm_record_initial_oe_pulse_start();
       spwm_gate->capture_start_time = false;
     }
+    if (!spwm_gate->pulse_each_clock) {
+      // FM6373-style OE stays asserted across the whole burst, so avoid
+      // re-writing the OE pin before every clock inside that burst.
+      io->SetBits(h.output_enable);
+    }
   }
 
   if (spwm_gate != nullptr && spwm_gate->active && spwm_gate->remaining > 0) {
-    io->SetBits(h.output_enable);
+    if (spwm_gate->pulse_each_clock) {
+      io->SetBits(h.output_enable);
+    }
   }
 
-  io->SetBits(h.clock);
-  io->ClearBits(h.clock);
+  if (spwm_gate == nullptr || !spwm_gate->pulse_each_clock) {
+    // FM6373-style clocks can merge the data update with the CLK rising edge,
+    // then drop CLK separately for the falling edge. This removes one GPIO
+    // write from every non-pulse_each_clock clock during upload/free-run.
+    io->WriteMaskedBits(spwm_out_bits | h.clock, spwm_write_mask | h.clock);
+    io->ClearBits(h.clock);
+  } else {
+    io->WriteMaskedBits(spwm_out_bits, spwm_write_mask);
+    io->SetBits(h.clock);
+    io->ClearBits(h.clock);
+  }
 
   if (spwm_gate != nullptr && spwm_gate->active && spwm_gate->remaining > 0) {
     if (spwm_gate->pulse_each_clock) {
@@ -993,6 +1030,66 @@ int spwm_advance_phase(int spwm_row_clks, int spwm_setup_clks) {
   return (spwm_setup_clks == 0) ? 0 : (spwm_row_clks - spwm_setup_clks);
 }
 
+// Resolve when the next OE burst should be armed for the active scan mode.
+// Type-2 shift-register row select delays the OE arm point so the trailing OE
+// clock overlaps the first Channel B blank-clock pulse.
+int spwm_compute_oe_arm_phase(int spwm_row_clks,
+                              int spwm_advance_phase,
+                              int spwm_oe_clks,
+                              bool spwm_row_before_oe) {
+  if (spwm_oe_clks <= 0 || spwm_row_before_oe) {
+    return 0;
+  }
+
+  if (spwm_get_runtime_state().row_address_type !=
+      SPWM_ROW_ADDRESS_TYPE_2_SHIFTREG_AB_BLANK_CLOCK) {
+    return 0;
+  }
+
+  if (spwm_row_clks <= spwm_advance_phase) {
+    return 0;
+  }
+
+  const int spwm_blank_clks = spwm_row_clks - spwm_advance_phase;
+  const SPWM_Panel_Settings &spwm_settings = spwm_get_panel_settings();
+  int spwm_a_pulse_clks =
+      spwm_settings.shiftreg_row_select_a_pulse_clk_count;
+  if (spwm_a_pulse_clks <= 0) {
+    return 0;
+  }
+  if (spwm_a_pulse_clks > spwm_blank_clks) {
+    spwm_a_pulse_clks = spwm_blank_clks;
+  }
+
+  const int spwm_max_start_clk = spwm_blank_clks - spwm_a_pulse_clks;
+  int spwm_a_pulse_start = 0;
+  if (spwm_settings.shiftreg_row_select_a_pulse_centered) {
+    spwm_a_pulse_start = spwm_max_start_clk / 2;
+  } else {
+    spwm_a_pulse_start =
+        std::min(spwm_settings.shiftreg_row_select_a_pulse_start_clk,
+                 spwm_max_start_clk);
+  }
+
+  const int spwm_b_pulse_start = std::max(0, spwm_a_pulse_start - 1);
+  const int spwm_arm_phase =
+      spwm_advance_phase + spwm_b_pulse_start - (spwm_oe_clks - 1);
+  return std::max(0, spwm_arm_phase);
+}
+
+// Refresh cached scan phases after mutating a scan config field such as
+// row_before_oe.
+void spwm_refresh_scan_config_derived_fields(
+    SPWM_Scan_Config *spwm_scan_config) {
+  if (spwm_scan_config == nullptr) return;
+
+  spwm_scan_config->oe_arm_phase =
+      spwm_compute_oe_arm_phase(spwm_scan_config->row_clks,
+                                spwm_scan_config->advance_phase,
+                                spwm_scan_config->oe_clks,
+                                spwm_scan_config->row_before_oe);
+}
+
 // Build a normalized scan-timing description for upload or free-run scanning.
 SPWM_Scan_Config spwm_make_scan_config(int spwm_row_clks,
                                        int spwm_setup_clks,
@@ -1000,10 +1097,16 @@ SPWM_Scan_Config spwm_make_scan_config(int spwm_row_clks,
                                        bool spwm_skip_first_oe,
                                        bool spwm_row_before_oe) {
   spwm_normalize_scan_timing(spwm_row_clks, &spwm_setup_clks, &spwm_oe_clks);
+  const int spwm_resolved_advance_phase =
+      spwm_advance_phase(spwm_row_clks, spwm_setup_clks);
 
   const SPWM_Scan_Config spwm_scan_config = {
       spwm_row_clks,
-      spwm_advance_phase(spwm_row_clks, spwm_setup_clks),
+      spwm_resolved_advance_phase,
+      spwm_compute_oe_arm_phase(spwm_row_clks,
+                                spwm_resolved_advance_phase,
+                                spwm_oe_clks,
+                                spwm_row_before_oe),
       spwm_oe_clks,
       spwm_skip_first_oe,
       spwm_row_before_oe,
@@ -1056,10 +1159,90 @@ int spwm_get_shiftreg_row_select_a_pulse_start_clk(int spwm_blank_clks,
   return spwm_settings.shiftreg_row_select_a_pulse_start_clk;
 }
 
-// Drive the DP32020A row-select waveform during the blank clocks before the
-// next OE burst. Channel A carries a configurable pulse inside that blanking
-// window, while Channel C is added on the wrap cycle from row 31 back to row 0.
-void spwm_row_dp32020a_drive_blanking(GPIO *io, const HardwareMapping &h,
+// Type-2 shift-register row select extends Channel B one clock earlier than
+// Channel A, so resolve that shared starting clock once from the configured
+// A-pulse geometry.
+int spwm_get_shiftreg_row_select_b_pulse_start_clk(int spwm_blank_clks) {
+  const int spwm_a_pulse_clks =
+      spwm_get_shiftreg_row_select_a_pulse_clk_count(spwm_blank_clks);
+  if (spwm_a_pulse_clks <= 0) return 0;
+
+  const int spwm_a_pulse_start =
+      spwm_get_shiftreg_row_select_a_pulse_start_clk(spwm_blank_clks,
+                                                     spwm_a_pulse_clks);
+  return std::max(0, spwm_a_pulse_start - 1);
+}
+
+// Return true when the active scan blank phase falls inside the requested pulse
+// window.
+bool spwm_blank_phase_in_pulse_window(int spwm_blank_phase,
+                                      int spwm_pulse_start_clk,
+                                      int spwm_pulse_end_clk) {
+  return spwm_blank_phase >= spwm_pulse_start_clk &&
+         spwm_blank_phase < spwm_pulse_end_clk;
+}
+
+bool spwm_uses_shiftreg_ab_blank_clock(int spwm_row_address_type) {
+  return spwm_row_address_type ==
+         SPWM_ROW_ADDRESS_TYPE_2_SHIFTREG_AB_BLANK_CLOCK;
+}
+
+// Resolve the A/B/C waveform for one blank-clock phase. Type 1 only emits the
+// A pulse and adds C on the real wrap. Type 2 adds an earlier B pulse and, on
+// wrap, mirrors that wider B pulse onto C.
+gpio_bits_t spwm_resolve_shiftreg_row_bits(const HardwareMapping &h,
+                                           int spwm_row_address_type,
+                                           int spwm_blank_phase,
+                                           int spwm_blank_clks,
+                                           bool spwm_wrapped_to_row_zero) {
+  if (spwm_blank_clks <= 0) return 0;
+
+  const int spwm_a_pulse_clks =
+      spwm_get_shiftreg_row_select_a_pulse_clk_count(spwm_blank_clks);
+  const int spwm_a_pulse_start =
+      spwm_get_shiftreg_row_select_a_pulse_start_clk(spwm_blank_clks,
+                                                     spwm_a_pulse_clks);
+  const int spwm_a_pulse_end = spwm_a_pulse_start + spwm_a_pulse_clks;
+  const bool spwm_in_a_pulse = spwm_blank_phase_in_pulse_window(
+      spwm_blank_phase, spwm_a_pulse_start, spwm_a_pulse_end);
+  const bool spwm_type2_transport =
+      spwm_uses_shiftreg_ab_blank_clock(spwm_row_address_type);
+
+  gpio_bits_t spwm_row_bits = 0;
+  if (spwm_type2_transport) {
+    const int spwm_b_pulse_start =
+        spwm_get_shiftreg_row_select_b_pulse_start_clk(spwm_blank_clks);
+    const bool spwm_in_b_pulse = spwm_blank_phase_in_pulse_window(
+        spwm_blank_phase, spwm_b_pulse_start, spwm_a_pulse_end);
+    if (spwm_in_b_pulse) {
+      spwm_row_bits |= h.b;
+      if (spwm_wrapped_to_row_zero) {
+        spwm_row_bits |= h.c;
+      }
+    }
+  }
+
+  if (spwm_in_a_pulse) {
+    spwm_row_bits |= h.a;
+    if (!spwm_type2_transport && spwm_wrapped_to_row_zero) {
+      spwm_row_bits |= h.c;
+    }
+  }
+
+  return spwm_row_bits;
+}
+
+// Drive the shift-register row-select waveform during the blank clocks before
+// the next OE burst.
+//
+// Type 1:
+// Channel A carries a configurable pulse inside the blanking window, while
+// Channel C is added on the wrap cycle from the last row back to row 0.
+//
+// Type 2:
+// Channel B starts one clock earlier than A and ends on the same clock. On the
+// wrap cycle, Channel C mirrors that longer B-width pulse.
+void spwm_row_shiftreg_drive_blanking(GPIO *io, const HardwareMapping &h,
                                       const SPWM_Scan_Config &spwm_scan_config,
                                       SPWM_Scan_State *spwm_scan_state) {
   if (io == nullptr || spwm_scan_state == nullptr) return;
@@ -1070,26 +1253,17 @@ void spwm_row_dp32020a_drive_blanking(GPIO *io, const HardwareMapping &h,
   if (spwm_blank_clks > 0 &&
       spwm_scan_state->phase >= spwm_scan_config.advance_phase &&
       spwm_scan_state->phase < spwm_scan_config.row_clks) {
+    const int spwm_row_address_type = spwm_get_runtime_state().row_address_type;
     const int spwm_blank_phase =
         spwm_scan_state->phase - spwm_scan_config.advance_phase;
-    const int spwm_a_pulse_clks =
-        spwm_get_shiftreg_row_select_a_pulse_clk_count(spwm_blank_clks);
-    const int spwm_a_pulse_start =
-        spwm_get_shiftreg_row_select_a_pulse_start_clk(spwm_blank_clks,
-                                                       spwm_a_pulse_clks);
-    const int spwm_a_pulse_end = spwm_a_pulse_start + spwm_a_pulse_clks;
-
-    if (spwm_blank_phase >= spwm_a_pulse_start &&
-        spwm_blank_phase < spwm_a_pulse_end) {
-      spwm_row_bits |= h.a;
-      if (spwm_scan_state->row == 0) {
-        spwm_row_bits |= h.c;
-      }
-    }
+    spwm_row_bits = spwm_resolve_shiftreg_row_bits(
+        h, spwm_row_address_type, spwm_blank_phase, spwm_blank_clks,
+        spwm_scan_state->wrapped_to_row_zero);
   }
 
-  // The DP32020A row-select waveform only needs level changes when the pulse
-  // starts or ends, so avoid re-writing A/B/C on clocks where the state holds.
+  // The blank-clock row-select waveforms only need level changes when the
+  // pulse starts or ends, so avoid re-writing A/B/C on clocks where the state
+  // holds.
   if (!spwm_scan_state->shiftreg_row_bits_valid ||
       spwm_scan_state->shiftreg_row_bits != spwm_row_bits) {
     io->WriteMaskedBits(spwm_row_bits, spwm_row_mask);
@@ -1098,14 +1272,20 @@ void spwm_row_dp32020a_drive_blanking(GPIO *io, const HardwareMapping &h,
   }
 }
 
-// Arm the next OE burst once the scan reaches the start of the visible window,
-// unless the first burst is still intentionally being skipped or an earlier
-// burst is still in flight.
+// Return the cached scan phase where the next OE burst should be armed.
+int spwm_resolve_oe_arm_phase(const SPWM_Scan_Config &spwm_scan_config) {
+  return spwm_scan_config.oe_arm_phase;
+}
+
+// Arm the next OE burst once the scan reaches the phase where the visible
+// clocks for the active row should begin, unless the first burst is still
+// intentionally being skipped or an earlier burst is still in flight.
 void spwm_scan_pre_clock_maybe_arm_oe(
     int spwm_phase, const SPWM_Scan_Config &spwm_scan_config,
     SPWM_OE_Gate_State *spwm_oe_gate,
     SPWM_Scan_State *spwm_scan_state) {
-  if (spwm_scan_state == nullptr || spwm_phase != 0 ||
+  if (spwm_scan_state == nullptr ||
+      spwm_phase != spwm_scan_config.oe_arm_phase ||
       spwm_scan_config.oe_clks <= 0 ||
       spwm_oe_gate_is_pending(spwm_oe_gate)) {
     return;
@@ -1128,8 +1308,12 @@ void spwm_advance_scan_row(SPWM_Scan_State *spwm_scan_state,
                            int spwm_double_rows) {
   if (spwm_scan_state == nullptr || spwm_double_rows <= 0) return;
 
+  // Clear the wrap marker for ordinary row advances. It will be asserted only
+  // for the single transition from the last row back to row 0.
+  spwm_scan_state->wrapped_to_row_zero = false;
   if (++spwm_scan_state->row >= spwm_double_rows) {
     spwm_scan_state->row = 0;
+    spwm_scan_state->wrapped_to_row_zero = true;
   }
 }
 
@@ -1196,7 +1380,7 @@ bool spwm_scan_pre_clock_shiftreg(GPIO *io, const HardwareMapping &h,
       spwm_advanced_row = true;
     }
 
-    spwm_row_dp32020a_drive_blanking(io, h, spwm_scan_config,
+    spwm_row_shiftreg_drive_blanking(io, h, spwm_scan_config,
                                      spwm_scan_state);
     spwm_scan_pre_clock_maybe_arm_oe(spwm_phase, spwm_scan_config,
                                      spwm_oe_gate, spwm_scan_state);
@@ -1209,7 +1393,7 @@ bool spwm_scan_pre_clock_shiftreg(GPIO *io, const HardwareMapping &h,
       spwm_advanced_row = true;
     }
 
-    spwm_row_dp32020a_drive_blanking(io, h, spwm_scan_config,
+    spwm_row_shiftreg_drive_blanking(io, h, spwm_scan_config,
                                      spwm_scan_state);
   }
 
@@ -1329,6 +1513,7 @@ void spwm_upload_framebuffer_blocks(
   }
 
   const SPWM_Pixel_Block_GPIO_Bits spwm_zero_block_gpio_bits = {{0}};
+  const SPWM_Panel_Settings &spwm_settings = spwm_get_panel_settings();
   const int spwm_last_chip = spwm_chip_count - 1;
   const size_t spwm_row_stride =
       static_cast<size_t>(spwm_framebuffer_view.columns) *
@@ -1344,10 +1529,12 @@ void spwm_upload_framebuffer_blocks(
       io->ClearBits(h.clock | h.strobe | spwm_rgb_mask);
 
       for (int spwm_chip = 0; spwm_chip < spwm_chip_count; ++spwm_chip) {
-        const int spwm_column =
+        const int spwm_physical_column =
             spwm_chip * spwm_channels_per_chip + spwm_channel;
+        const int spwm_column = spwm_map_physical_column_to_visible(
+            spwm_physical_column, spwm_settings);
         const SPWM_Pixel_Block_GPIO_Bits spwm_block_gpio_bits =
-            (spwm_column < spwm_framebuffer_view.columns)
+            (spwm_column >= 0 && spwm_column < spwm_framebuffer_view.columns)
                 ? spwm_repack_pixel_block_gpio_bits(
                       spwm_row_base + spwm_column,
                       spwm_framebuffer_view.columns,
@@ -1426,7 +1613,7 @@ void spwm_upload_framebuffer_direct(
 // after that blanking window, but unlike the direct path there is no
 // SetRowAddress() call in the hot upload loop.
 void spwm_scan_pre_clock_shiftreg_upload(
-    GPIO *io, const HardwareMapping &h, int spwm_double_rows,
+    GPIO *io, const HardwareMapping &h, int spwm_scan_rows,
     const SPWM_Scan_Config &spwm_scan_config,
     SPWM_OE_Gate_State *spwm_oe_gate,
     SPWM_Scan_State *spwm_scan_state) {
@@ -1437,10 +1624,11 @@ void spwm_scan_pre_clock_shiftreg_upload(
 
   if (spwm_scan_config.row_before_oe) {
     if (spwm_scan_state->phase == spwm_scan_config.advance_phase) {
-      spwm_advance_scan_row(spwm_scan_state, spwm_double_rows);
+      spwm_advance_scan_row(spwm_scan_state, spwm_scan_rows);
     }
 
-    spwm_row_dp32020a_drive_blanking(io, h, spwm_scan_config, spwm_scan_state);
+    spwm_row_shiftreg_drive_blanking(io, h, spwm_scan_config,
+                                     spwm_scan_state);
     spwm_scan_pre_clock_maybe_arm_oe(
         spwm_scan_state->phase, spwm_scan_config, spwm_oe_gate,
         spwm_scan_state);
@@ -1450,9 +1638,9 @@ void spwm_scan_pre_clock_shiftreg_upload(
   spwm_scan_pre_clock_maybe_arm_oe(
       spwm_scan_state->phase, spwm_scan_config, spwm_oe_gate, spwm_scan_state);
   if (spwm_scan_state->phase == spwm_scan_config.advance_phase) {
-    spwm_advance_scan_row(spwm_scan_state, spwm_double_rows);
+    spwm_advance_scan_row(spwm_scan_state, spwm_scan_rows);
   }
-  spwm_row_dp32020a_drive_blanking(io, h, spwm_scan_config, spwm_scan_state);
+  spwm_row_shiftreg_drive_blanking(io, h, spwm_scan_config, spwm_scan_state);
 }
 
 // The shared startup burst is consumed by the first upload clocks. Once it
@@ -1481,15 +1669,17 @@ void spwm_finish_shared_initial_oe_if_ready(
 // Side effects: Emits RGB/LAT/CLK/OE timing and advances shift-register row state.
 //
 // This path treats the blank clocks as part of row selection. The same clocks
-// that separate OE windows also generate the A/C pulse pattern that advances
-// the panel's internal row shift register, so row signalling stays tied to the
-// scan clocks even though the panel profile still controls OE timing.
+// that separate OE windows also generate the blank-clock pulse pattern that
+// advances the panel's internal row shift register, so row signalling stays
+// tied to the scan clocks even though the panel profile still controls OE
+// timing.
 void spwm_upload_framebuffer_shiftreg(
     GPIO *io, const HardwareMapping &h,
     const SPWM_Framebuffer_View &spwm_framebuffer_view,
     gpio_bits_t spwm_rgb_mask,
     gpio_bits_t spwm_data_mask,
     int spwm_upload_rows,
+    int spwm_scan_rows,
     int spwm_chip_count,
     int spwm_channels_per_chip,
     int spwm_word_bits,
@@ -1511,7 +1701,7 @@ void spwm_upload_framebuffer_shiftreg(
           const bool spwm_shiftreg_defer_row_scan = *spwm_initial_oe_pending;
           if (!spwm_shiftreg_defer_row_scan) {
             spwm_scan_pre_clock_shiftreg_upload(
-                io, h, spwm_upload_rows, spwm_upload_scan_config,
+                io, h, spwm_scan_rows, spwm_upload_scan_config,
                 spwm_oe_gate, spwm_scan_state);
           }
 
@@ -1590,9 +1780,20 @@ int spwm_get_shiftreg_wrap_completion_clks(
          spwm_pulse_clks;
 }
 
-// Continue scanning until the state machine lands on a clean row wrap before the
-// next frame begins. Shift-register row select needs extra clocks after the
-// wrap so the delayed A/C pulse for row 0 is actually emitted before stopping.
+// Resolve the effective shift-register scan-row count. When no override is
+// supplied, keep the historical rows/2 behavior derived from upload rows.
+int spwm_get_effective_scan_rows(bool spwm_blank_clock_row_transport,
+                                 int spwm_upload_rows) {
+  if (!spwm_blank_clock_row_transport) return spwm_upload_rows;
+
+  const int spwm_scan_rows_override = spwm_get_runtime_state().scan_rows;
+  return spwm_scan_rows_override > 0 ? spwm_scan_rows_override
+                                     : spwm_upload_rows;
+}
+
+// Continue scanning until the state machine lands on a clean row wrap before
+// the next frame begins. Shift-register row select needs extra clocks after the
+// wrap so the delayed row-0 wrap pulse is actually emitted before stopping.
 void spwm_align_frame_end_to_row_wrap(
     GPIO *io, const HardwareMapping &h,
     gpio_bits_t spwm_rgb_mask, gpio_bits_t spwm_data_mask,
@@ -1612,10 +1813,10 @@ void spwm_align_frame_end_to_row_wrap(
   spwm_scan_state->phase %= spwm_align_scan_config.row_clks;
 
   const int spwm_last_row = spwm_double_rows - 1;
-  const bool spwm_shiftreg_row_select =
+  const bool spwm_blank_clock_row_transport =
       spwm_uses_blank_clock_row_select(spwm_row_setter);
   const int spwm_wrap_completion_clks =
-      spwm_shiftreg_row_select
+      spwm_blank_clock_row_transport
           ? spwm_get_shiftreg_wrap_completion_clks(spwm_align_scan_config)
           : 0;
   bool spwm_wrapped = false;
@@ -1719,7 +1920,7 @@ gpio_bits_t spwm_get_framebuffer_rgb_mask(const HardwareMapping &h) {
 
 // FM6373-style OE advances the row shortly before the next burst, while
 // FM6363-style OE uses the whole non-OE window as setup time. This stays tied
-// to the panel profile even when row-select transport is overridden.
+// to the panel profile even when row transport is overridden.
 SPWM_OE_Style spwm_get_active_oe_style() {
   const SPWM_Panel_Settings &spwm_settings = spwm_get_panel_settings();
   return spwm_settings.oe_style;
@@ -1783,19 +1984,22 @@ SPWM_Scan_Config spwm_make_runtime_scan_config(
 //
 // There are two startup modes:
 // - Standalone initial OE burst: emit the startup clocks here before any
-//   framebuffer data is uploaded. The later upload phase starts after that
-//   burst has already advanced scan phase.
+//   framebuffer data is uploaded. The later upload phase resumes as though the
+//   startup burst began at the same scan phase as a normal OE burst, so the
+//   first-to-second OE spacing matches the steady-state row period even when
+//   the startup pulse width differs from the repeating OE pulses.
 // - Shared initial OE with upload: arm the startup OE pulse here, but let the
 //   first real upload clocks consume it. This keeps scan phase aligned for
 //   panel profiles whose first visible OE burst is expected to overlap upload.
 //
-// The active panel profile selects which form to use. Row-select transport is
+// The active panel profile selects which form to use. Row transport is
 // resolved separately by the chosen row setter.
 bool spwm_start_initial_oe_phase(
     GPIO *io, const HardwareMapping &h,
     gpio_bits_t spwm_rgb_mask, gpio_bits_t spwm_data_mask,
     int spwm_init_oe_clks,
     const SPWM_Scan_Config &spwm_upload_scan_config,
+    bool spwm_blank_clock_row_transport,
     bool spwm_share_initial_oe_with_upload,
     SPWM_OE_Gate_State *spwm_oe_gate,
     SPWM_Scan_State *spwm_scan_state) {
@@ -1828,8 +2032,16 @@ bool spwm_start_initial_oe_phase(
 
   if (spwm_upload_scan_config.row_clks > 0 &&
       spwm_upload_scan_config.oe_clks > 0) {
+    const int spwm_regular_oe_arm_phase =
+        spwm_resolve_oe_arm_phase(spwm_upload_scan_config);
+    (void)spwm_blank_clock_row_transport;
+    // Treat the standalone startup burst as the first OE burst in the regular
+    // cadence: after consuming N startup clocks, resume at the phase reached N
+    // clocks after the normal OE-arm point. That keeps the next OE start one
+    // full row period after the startup OE start.
     spwm_scan_state->phase =
-        spwm_init_oe_clks % spwm_upload_scan_config.row_clks;
+        (spwm_regular_oe_arm_phase + spwm_init_oe_clks) %
+        spwm_upload_scan_config.row_clks;
     spwm_scan_state->oe_primed = true;
   }
 
@@ -1850,10 +2062,11 @@ bool spwm_is_panel_type(const char *spwm_panel_type) {
 // Select the active SPWM runtime profile and report whether the panel should
 // route framebuffer refresh through the SPWM path.
 bool spwm_initialize_panel_type(const char *spwm_panel_type, int spwm_columns,
-                                int spwm_row_address_type) {
+                                int spwm_row_address_type,
+                                int spwm_scan_rows) {
   spwm_set_enabled(false);
   spwm_configure_panel_type(spwm_panel_type, spwm_columns,
-                            spwm_row_address_type);
+                            spwm_row_address_type, spwm_scan_rows);
 
   if (spwm_panel_type == nullptr || *spwm_panel_type == '\0') return false;
   if (!spwm_is_panel_type(spwm_panel_type)) return false;
@@ -1862,11 +2075,12 @@ bool spwm_initialize_panel_type(const char *spwm_panel_type, int spwm_columns,
   return true;
 }
 
-// Load the chosen panel profile, apply row-select transport defaults plus any
-// environment overrides, and rebuild the runtime register layout for the
-// active panel width.
+// Load the chosen panel profile, record the requested row transport override,
+// apply any environment overrides, and rebuild the runtime register layout for
+// the active panel width.
 void spwm_configure_panel_type(const char *spwm_panel_type, int spwm_columns,
-                               int spwm_row_address_type) {
+                               int spwm_row_address_type,
+                               int spwm_scan_rows) {
   SPWM_Runtime_State &spwm_runtime_state = spwm_get_runtime_state();
   SPWM_Auto_Tune_Control &spwm_auto_tune_control =
       spwm_get_auto_tune_control_storage();
@@ -1876,10 +2090,12 @@ void spwm_configure_panel_type(const char *spwm_panel_type, int spwm_columns,
       spwm_get_default_panel_profile();
 
   spwm_runtime_state.panel_settings =
-      spwm_profile != nullptr ? spwm_profile->settings
-                              : spwm_default_profile.settings;
-  spwm_apply_row_address_type_defaults(spwm_row_address_type,
-                                       &spwm_runtime_state.panel_settings);
+      spwm_profile != nullptr
+          ? spwm_resolve_profile_settings(*spwm_profile, spwm_columns)
+          : spwm_resolve_profile_settings(spwm_default_profile, spwm_columns);
+  spwm_runtime_state.row_address_type = spwm_row_address_type;
+  spwm_runtime_state.scan_rows = spwm_scan_rows;
+
   spwm_apply_panel_env_overrides(&spwm_runtime_state.panel_settings);
   spwm_auto_tune_control.loaded = false;
 
@@ -2084,17 +2300,20 @@ void spwm_dump_to_matrix(GPIO *io, const HardwareMapping &h,
       false, 0, SPWM_AUTO_TUNE_SECTION_NONE};
   spwm_auto_tune_begin_frame(&spwm_auto_tune_state);
 
-  const bool spwm_shiftreg_row_select =
+  const bool spwm_blank_clock_row_transport =
       spwm_uses_blank_clock_row_select(spwm_row_setter);
+  const int spwm_effective_scan_rows =
+      spwm_get_effective_scan_rows(spwm_blank_clock_row_transport,
+                                   spwm_upload_rows);
   const SPWM_OE_Style spwm_oe_style = spwm_get_active_oe_style();
   const SPWM_Scan_Pre_Clock_Handler spwm_scan_pre_clock_handler =
-      spwm_shiftreg_row_select ? spwm_scan_pre_clock_shiftreg
-                               : spwm_scan_pre_clock_direct;
+      spwm_blank_clock_row_transport ? spwm_scan_pre_clock_shiftreg
+                                     : spwm_scan_pre_clock_direct;
   SPWM_OE_Gate_State spwm_oe_gate = {0, false, &spwm_auto_tune_state,
                                      SPWM_AUTO_TUNE_SECTION_NONE,
                                      spwm_oe_style_pulse_each_clock(spwm_oe_style),
                                      false};
-  SPWM_Scan_State spwm_scan_state = {0, 0, false, 0, false};
+  SPWM_Scan_State spwm_scan_state = {0, 0, false, false, 0, false};
   const int spwm_init_oe_clks = spwm_get_first_oe_clk_length();
   const SPWM_Scan_Config spwm_upload_scan_config =
       spwm_make_runtime_scan_config(spwm_oe_style,
@@ -2124,7 +2343,8 @@ void spwm_dump_to_matrix(GPIO *io, const HardwareMapping &h,
       spwm_oe_style_shares_initial_oe_with_upload(spwm_oe_style);
   bool spwm_initial_oe_pending = spwm_start_initial_oe_phase(
       io, h, spwm_rgb_mask, spwm_data_mask, spwm_init_oe_clks,
-      spwm_upload_scan_config, spwm_share_initial_oe_with_upload,
+      spwm_upload_scan_config, spwm_blank_clock_row_transport,
+      spwm_share_initial_oe_with_upload,
       &spwm_oe_gate, &spwm_scan_state);
 
   // Upload the RGB data for each logical row. Each logical row contains both
@@ -2137,8 +2357,9 @@ void spwm_dump_to_matrix(GPIO *io, const HardwareMapping &h,
   //
   // Shift-register path:
   // row stepping happens through the blank-clock waveform, so upload and scan
-  // phase must stay tightly synchronized.
-  if (!spwm_shiftreg_row_select) {
+  // phase must stay tightly synchronized. --led-spwm-scan can extend the wrap
+  // count beyond upload rows for panels such as 1/43-scan ICND1065L modules.
+  if (!spwm_blank_clock_row_transport) {
     spwm_upload_framebuffer_direct(
         io, h, spwm_row_setter, spwm_framebuffer_view, spwm_rgb_mask,
         spwm_data_mask, spwm_upload_rows, spwm_chip_count,
@@ -2147,7 +2368,8 @@ void spwm_dump_to_matrix(GPIO *io, const HardwareMapping &h,
   } else {
     spwm_upload_framebuffer_shiftreg(
         io, h, spwm_framebuffer_view, spwm_rgb_mask, spwm_data_mask,
-        spwm_upload_rows, spwm_chip_count, spwm_channels_per_chip,
+        spwm_upload_rows, spwm_effective_scan_rows, spwm_chip_count,
+        spwm_channels_per_chip,
         spwm_word_bits, spwm_upload_scan_config,
         &spwm_oe_gate, &spwm_scan_state, &spwm_initial_oe_pending);
   }
@@ -2172,7 +2394,7 @@ void spwm_dump_to_matrix(GPIO *io, const HardwareMapping &h,
   // stays visible for the configured hold period.
   spwm_oe_gate.section = SPWM_AUTO_TUNE_SECTION_FREE;
   spwm_free_run_scan(io, h, spwm_rgb_mask, spwm_data_mask, spwm_row_setter,
-                     spwm_upload_rows,
+                     spwm_effective_scan_rows,
                      spwm_end_of_frame_extra_row_cycles,
                      spwm_free_scan_config, spwm_scan_pre_clock_handler,
                      &spwm_oe_gate, &spwm_scan_state);
@@ -2181,10 +2403,11 @@ void spwm_dump_to_matrix(GPIO *io, const HardwareMapping &h,
   // predictable scan position.
   SPWM_Scan_Config spwm_align_scan_config = spwm_free_scan_config;
   spwm_align_scan_config.row_before_oe = true;
+  spwm_refresh_scan_config_derived_fields(&spwm_align_scan_config);
   spwm_oe_gate.section = SPWM_AUTO_TUNE_SECTION_FREE;
   spwm_align_frame_end_to_row_wrap(
       io, h, spwm_rgb_mask, spwm_data_mask, spwm_row_setter,
-      spwm_upload_rows, spwm_align_scan_config,
+      spwm_effective_scan_rows, spwm_align_scan_config,
       spwm_scan_pre_clock_handler,
       &spwm_oe_gate, &spwm_scan_state);
 

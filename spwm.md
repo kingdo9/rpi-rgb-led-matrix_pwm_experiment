@@ -11,13 +11,12 @@ nano /boot/firmware/cmdline.txt
 Also it is highly recommended to **ensure you are running with a Real Time kernel.**
 [Real Time Kernel Setup Guide](/RT-kernel/README.md)
 
-Currently supported SPWM profiles. The first two have been tested; `SM16380SH`
-support is based on captured register data and may still need panel-specific
-tuning.
+Currently tested SPWM displays.
 
 FM6373 / DP32019B - 128x64 \
 FM6363 / DP32020A - 128x64 \
-SM16380SH - 128x64
+SM16380SH - 128x64 \
+ICND1065L / 5958 - 172x86
 
 [Further discussion for SPWM panels](https://github.com/hzeller/rpi-rgb-led-matrix/issues/1866).
 
@@ -35,11 +34,13 @@ The parameters are by default tuned to Raspberry Pi 4, for other devices, exampl
 
 ### How to run S-PWM panels
 
-Some multiplexers are more resourceful than others. When using..
---spwm-row-addr-type=0 - **best limit --led-limit-refresh to 120fps | example DP32019B Direct** \
---spwm-row-addr-type=1 - **best limit --led-limit-refresh to 60fps | example DP32020A Shift Register** 
+**Recommended to use --led-limit-refresh=60**
 
-**Don't worry about flicker as S-PWM devices have an internal refresh rate much higher, it is only the frame content changes when we refer to 60 / 120 fps**
+--spwm-row-addr-type=0 - DP32019B Direct \
+--spwm-row-addr-type=1 - DP32020A Shift Register
+--spwm-row-addr-type=2 - DP32020A Shift Register Variation
+
+**Don't worry about flicker as S-PWM devices have an internal refresh rate much higher, it is only the frame content changes when we refer to for 60fps**
 
 Assuming Hzeller library is installed in /opt/rpi-rgb-led-matrix
 
@@ -51,6 +52,10 @@ Pi 4 - FM6373 / DP32019B 128x64 Example
 Pi 4 - FM6363 / DP32020A 128x64 Example
 
     taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix/examples-api-use/demo -D4 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=adafruit-hat-pwm --led-brightness=50 --led-slowdown-gpio=5 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=fm6363 --led-spwm-row-addr-type=1
+
+Pi 4 - ICND1065L 172x86 Example
+
+    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix/examples-api-use/demo -D4 --led-rows=86 --led-cols=172 --led-scan-mode=0 --led-gpio-mapping=adafruit-hat-pwm --led-brightness=50 --led-slowdown-gpio=5 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=icnd1065l --led-spwm-row-addr-type=2 --led-spwm-scan=43
 
 Pi 4 - SM16380SH 128x64 Example
 
@@ -151,16 +156,16 @@ Maximum CLKS to adjust by from auto tune.
 ---
 
 #### SPWM_SHIFT_REG_ROW_SELECT_A_PULSE_CLK_COUNT=2
-Only applies to --spwm-row-addr-type=1 \
+Applies to --spwm-row-addr-type=1 and --spwm-row-addr-type=2 \
 Channel A pulse CLK length for Shift Reg multiplexer \
 <img alt="Image" src="./img/spwm/spwm_shift_reg_row_select_a_pulse_clk_count.png" />
 
 #### SPWM_SHIFT_REG_ROW_SELECT_A_PULSE_START_CLK=0
-Only applies to --spwm-row-addr-type=1 \
+Applies to --spwm-row-addr-type=1 and --spwm-row-addr-type=2 \
 Start CLK offset for the Channel A pulse when centering is disabled. \
 
 #### SPWM_SHIFT_REG_ROW_SELECT_A_PULSE_CENTERED=1
-Only applies to --spwm-row-addr-type=1 \
+Applies to --spwm-row-addr-type=1 and --spwm-row-addr-type=2 \
 Shift Reg centre Channel A pulse between OE pulses. \
 <img alt="Image" src="./img/spwm/spwm_shift_reg_row_select_a_pulse_centered.png" />
 

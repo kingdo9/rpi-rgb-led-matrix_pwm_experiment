@@ -63,13 +63,14 @@ public:
     // Name of the hardware mapping. Something like "regular" or "adafruit-hat"
     const char *hardware_mapping;
 
-    // The "rows" are the number
-    // of rows supported by the display, so 32 or 16. Default: 32.
+    // The "rows" are the number of rows supported by the display. Most panels
+    // are 16, 32 or 64 rows; some SPWM shift-register panels use larger even
+    // counts such as 86. Default: 32.
     // Flag: --led-rows
     int rows;
 
     // The "cols" are the number of columns per panel. Typically something
-    // like 32, but also 64 is possible. Sometimes even 40.
+    // like 32 or 64, but other widths such as 40 or 172 are also possible.
     // cols * chain_length is the total length of the display, so you can
     // represent a 64 wide display as cols=32, chain=2 or cols=64, chain=1;
     // same thing, but more convenient to think of.
@@ -121,8 +122,14 @@ public:
 
     // SPWM panels can override the row-address handling without affecting the
     // normal PWM/non-SPWM row setter selection. 0 keeps the direct A-E SPWM
-    // path; 1 selects the shift-register blank-clock SPWM path.
+    // path; 1 selects the shift-register blank-clock A/C path; 2 selects the
+    // ICND1065L-style shift-register blank-clock A+B path with wrap C.
     int spwm_row_address_type;  // Flag --led-spwm-row-addr-type
+
+    // Optional SPWM scan-row override for shift-register row select. 0 keeps
+    // the existing rows/2 behavior, while positive values such as 43 allow
+    // panels with non-1/32 scan receivers to wrap on a different pulse count.
+    int spwm_scan_rows;  // Flag --led-spwm-scan
 
     // Type of multiplexing. 0 = direct, 1 = stripe, 2 = checker,...
     // Flag: --led-multiplexing

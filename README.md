@@ -76,6 +76,10 @@ SPWM panels currently supported by this tree:
   `--led-panel-type=fm6373 --led-spwm-row-addr-type=0`
 <br>
 
+- ICND1065L + shift-register row selection: \
+  `--led-panel-type=icnd1065l --led-rows=86 --led-cols=172 --led-spwm-row-addr-type=2 --led-spwm-scan=43`
+<br>
+
 - FM6363 + DP32020A shift-register row selection: \
   `--led-panel-type=fm6363 --led-spwm-row-addr-type=1`
 <br>
@@ -83,6 +87,11 @@ SPWM panels currently supported by this tree:
 - SM16380SH \
   `--led-panel-type=sm16380sh --led-spwm-row-addr-type=0`
 <br>
+
+Shared SPWM flags:
+
+- `--led-spwm-row-addr-type=<0..2>` selects the SPWM row-address transport.
+- `--led-spwm-scan=<rows>` overrides the SPWM scan-row count e.g values such as `43` for 1/43.
 
 [SPWM Tuning Guide](./spwm.md)
 
@@ -312,8 +321,8 @@ happy.
 The next most important flags describe the type and number of displays connected
 
 ```
---led-rows=<rows>        : Panel rows. Typically 8, 16, 32 or 64. (Default: 32).
---led-cols=<cols>        : Panel columns. Typically 32 or 64. (Default: 32).
+--led-rows=<rows>        : Panel rows. Typically 8, 16, 32 or 64; SPWM row-address types 1/2 can also use larger even counts such as 86. (Default: 32).
+--led-cols=<cols>        : Panel columns. Typically 32 or 64; SPWM panels can also use non-standard widths such as 172. (Default: 32).
 --led-chain=<chained>    : Number of daisy-chained panels. (Default: 1).
 --led-parallel=<parallel>: For A/B+ models or RPi2,3b: parallel chains. range=1..3 (Default: 1, 6 for Compute Module).
 ```
@@ -374,8 +383,12 @@ two chained panels, so then you'd use
 
 ```
 --led-row-addr-type=<0..5>: 0 = default; 1 = AB-addressed panels; 2 = direct row select; 3 = ABC-addressed panels; 4 = ABC Shift + DE direct, 5 = ABC method similar to 3, but faster on some panels (needs less of a slowdown) (Default: 0).
---led-spwm-row-addr-type=<0..1>: SPWM row select. 0 = direct A-E row flow; 1 = shift-register blank-clock row-select (Default: 0).
+
+--led-spwm-row-addr-type=<0..2>: SPWM row select. 0 = direct A-E row flow; 1 = shift-register blank-clock A/C row-select; 2 = shift-register blank-clock A+B with wrap-C row-select (Default: 0).
+--led-spwm-scan=<rows>: SPWM-only scan-row override e.g 43 for 1/43 (Default: 0).
 ```
+
+For SPWM panels, `--led-panel-type` selects the panel profile, `--led-spwm-row-addr-type` selects the SPWM row-address path, and `--led-spwm-scan` is only needed when the shift-register path needs a non-default scan count.
 
 This option is useful for certain 64x64 or 32x16 panels. For 64x64 panels,
 that only have an `A` and `B` address line, you'd use `--led-row-addr-type=1`.

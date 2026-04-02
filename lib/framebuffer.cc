@@ -197,9 +197,10 @@ private:
   const gpio_bits_t dck_;
 };
 
-// Panels such as FM6363 advance the next row during the blank clocks instead
-// of latching a direct A/B/C row address ahead of time. This setter only
-// reserves those pins and returns them low when the logical row changes.
+// Panels such as FM6363 and ICND1065L advance the next row during the blank
+// clocks instead of latching a direct A/B/C row address ahead of time. This
+// setter only reserves those pins and returns them low when the logical row
+// changes.
 class SPWMBlankClockRowSelectSetter : public RowAddressSetter {
  public:
   explicit SPWMBlankClockRowSelectSetter(const HardwareMapping &h)
@@ -329,6 +330,44 @@ private:
   int last_row_;
 };
 
+// SPWM panel profiles choose init/register/OE behavior, while
+// --led-spwm-row-addr-type only chooses how rows are transported at runtime.
+RowAddressSetter *CreateSpwmRowTransportSetter(int double_rows,
+                                               const HardwareMapping &h,
+                                               int spwm_row_address_type) {
+  switch (spwm_row_address_type) {
+    case SPWM_ROW_ADDRESS_TYPE_0_DIRECT_AE:
+      return new DirectRowAddressSetter(double_rows, h);
+    case SPWM_ROW_ADDRESS_TYPE_1_SHIFTREG_BLANK_CLOCK:
+    case SPWM_ROW_ADDRESS_TYPE_2_SHIFTREG_AB_BLANK_CLOCK:
+      return new SPWMBlankClockRowSelectSetter(h);
+    default:
+      return NULL;
+  }
+}
+
+RowAddressSetter *CreateLegacyRowAddressSetter(int double_rows,
+                                               const HardwareMapping &h,
+                                               int row_address_type) {
+  switch (row_address_type) {
+    case 0:
+      return new DirectRowAddressSetter(double_rows, h);
+    case 1:
+      return new ShiftRegisterRowAddressSetter(double_rows, h);
+    case 2:
+      return new DirectABCDLineRowAddressSetter(double_rows, h);
+    case 3:
+      return new ABCShiftRegisterRowAddressSetter(double_rows, h);
+    case 4:
+      return new SM5266RowAddressSetter(double_rows, h);
+    case 5:
+      return new B707ShiftRegisterRowAddressSetter(double_rows, h);
+    default:
+      assert(0);  // unexpected type.
+      return NULL;
+  }
+}
+
 }
 
 const struct HardwareMapping *Framebuffer::hardware_mapping_ = NULL;
@@ -337,6 +376,7 @@ RowAddressSetter *Framebuffer::row_setter_ = NULL;
 Framebuffer::Framebuffer(int rows, int columns, int parallel,
                          int scan_mode,
                          const char *led_sequence, bool inverse_color,
+                         bool allow_large_spwm_rows,
                          PixelDesignatorMap **mapper)
   : rows_(rows),
     parallel_(parallel),
@@ -350,7 +390,8 @@ Framebuffer::Framebuffer(int rows, int columns, int parallel,
     shared_mapper_(mapper) {
   assert(hardware_mapping_ != NULL);   // Called InitHardwareMapping() ?
   assert(shared_mapper_ != NULL);  // Storage should be provided by RGBMatrix.
-  assert(rows_ >=4 && rows_ <= 64 && rows_ % 2 == 0);
+  assert(rows_ >= 4 && rows_ % 2 == 0);
+  assert(rows_ <= (allow_large_spwm_rows ? 128 : 64));
   if (parallel > hardware_mapping_->max_parallel_chains) {
     fprintf(stderr, "The %s GPIO mapping only supports %d parallel chain%s, "
             "but %d was requested.\n", hardware_mapping_->name,
@@ -479,44 +520,16 @@ Framebuffer::~Framebuffer() {
   const bool is_spwm_panel = spwm_is_panel_type(panel_type);
   if (is_spwm_panel) {
     spwm_set_parallel_chains(parallel);
-    // For SPWM panels, --led-spwm-row-addr-type owns row transport
-    // selection. --led-row-addr-type is only used for non-SPWM panels.
-    switch (spwm_row_address_type) {
-      case SPWM_ROW_ADDRESS_TYPE_0_DIRECT_AE:
-        row_setter_ = new DirectRowAddressSetter(double_rows, h);
-        break;
-      case SPWM_ROW_ADDRESS_TYPE_1_SHIFTREG_BLANK_CLOCK:
-        row_setter_ = new SPWMBlankClockRowSelectSetter(h);
-        break;
-      default:
-        break;
-    }
+    // SPWM keeps the panel profile and row transport separate: panel_type
+    // selects init/register/OE behavior, while --led-spwm-row-addr-type
+    // selects the row transport helper used during refresh.
+    row_setter_ =
+        CreateSpwmRowTransportSetter(double_rows, h, spwm_row_address_type);
   }
 
   if (row_setter_ == NULL) {
-    switch (row_address_type) {
-    case 0:
-      row_setter_ = new DirectRowAddressSetter(double_rows, h);
-      break;
-    case 1:
-      row_setter_ = new ShiftRegisterRowAddressSetter(double_rows, h);
-      break;
-    case 2:
-      row_setter_ = new DirectABCDLineRowAddressSetter(double_rows, h);
-      break;
-    case 3:
-      row_setter_ = new ABCShiftRegisterRowAddressSetter(double_rows, h);
-      break;
-    case 4:
-      row_setter_ = new SM5266RowAddressSetter(double_rows, h);
-      break;
-    case 5:
-      row_setter_ = new B707ShiftRegisterRowAddressSetter(double_rows, h);
-      break;
-
-    default:
-      assert(0);  // unexpected type.
-    }
+    row_setter_ =
+        CreateLegacyRowAddressSetter(double_rows, h, row_address_type);
   }
 
   all_used_bits |= row_setter_->need_bits();
@@ -631,10 +644,12 @@ static void InitFM6127(GPIO *io, const struct HardwareMapping &h, int columns) {
 /*static*/ void Framebuffer::InitializePanels(GPIO *io,
                                               const char *panel_type,
                                               int columns,
-                                              int spwm_row_address_type) {
+                                              int spwm_row_address_type,
+                                              int spwm_scan_rows) {
   const bool spwm_panel_handled =
       spwm_initialize_panel_type(panel_type, columns,
-                                 spwm_row_address_type);
+                                 spwm_row_address_type,
+                                 spwm_scan_rows);
 
   if (!panel_type || panel_type[0] == '\0') return;
 

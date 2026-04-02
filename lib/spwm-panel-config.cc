@@ -53,8 +53,32 @@ SPWM_Register_Timing spwm_make_register_timing(
   return spwm_timing;
 }
 
+// Apply one sparse physical-column layout to a profile when the resolved width
+// matches. This keeps odd receiver-chain wiring quirks reusable across panel
+// definitions instead of open-coding the same slot list in each profile.
+template <size_t N>
+void spwm_apply_missing_column_layout(
+    SPWM_Panel_Settings *spwm_settings, int spwm_columns,
+    int spwm_expected_columns, const int (&spwm_missing_columns)[N]) {
+  if (spwm_settings == nullptr || spwm_columns != spwm_expected_columns) {
+    return;
+  }
+
+  const int spwm_missing_column_count = std::min(
+      static_cast<int>(N), SPWM_Panel_Settings::kMaxMissingColumnSlots);
+  spwm_settings->missing_column_count = spwm_missing_column_count;
+  for (int spwm_column = 0; spwm_column < spwm_missing_column_count;
+       ++spwm_column) {
+    spwm_settings->missing_column_positions[spwm_column] =
+        spwm_missing_columns[spwm_column];
+  }
+}
+
+static const int SPWM_SPARSE_172_COLUMN_LAYOUT[] = {20, 52, 100, 148};
+
 // Build the shared SPWM settings baseline. Panel profiles can then override
-// only the values that differ. Default based on FM6373
+// only the values that differ. Default based on FM6373, including the shared
+// shift-register Channel A pulse geometry used by row-address types 1 and 2.
 SPWM_Panel_Settings spwm_make_default_panel_settings() {
   SPWM_Panel_Settings spwm_settings = {};
   spwm_settings.default_rows = 64;
@@ -66,13 +90,17 @@ SPWM_Panel_Settings spwm_make_default_panel_settings() {
   spwm_settings.auto_tune_frames = 20;
   spwm_settings.auto_tune_max_step_clks = 50;
   spwm_settings.first_oe_clk_length = 12;
-  spwm_settings.end_of_frame_extra_row_cycles = 20;
+  spwm_settings.end_of_frame_extra_row_cycles = 53;
   spwm_settings.frame_end_sleep_us = 300;
   spwm_settings.oe_during_upload_clk_count = 112;
   spwm_settings.oe_after_upload_clk_count = 112;
   spwm_settings.oe_clk_look_behind = 16;
   spwm_settings.oe_clk_length = 4;
+  spwm_settings.shiftreg_row_select_a_pulse_clk_count = 2;
+  spwm_settings.shiftreg_row_select_a_pulse_start_clk = 0;
+  spwm_settings.shiftreg_row_select_a_pulse_centered = true;
   spwm_settings.oe_style = SPWM_OE_STYLE_FM6373;
+  spwm_settings.missing_column_count = 0;
   return spwm_settings;
 }
 
@@ -162,18 +190,20 @@ static const uint16_t SPWM_FM6373_BLOCK3_SEQ_B[] = {
     0xf000, 0xf100, 0xf200, 0xf300, 0xf400, 0xf500, 0x2300,
 };
 
-// FM6373 frame start: emit LAT bursts of 3, 11, and 14 clocks, then
-// stream register blocks 1-5 with block 3 coming from the rotating RGB
-// register sequence above.
+// FM6373 frame start: emit LAT bursts of 3, 11, and 14 clocks, each with an
+// optional trailing LAT-low spacer count, then stream register blocks 1-5 with
+// block 3 coming from the rotating RGB register sequence above.
+
 static const SPWM_Init_Step SPWM_FM6373_INIT_STEPS[] = {
-    {SPWM_INIT_STEP_LAT_PULSES, 3, 0},
-    {SPWM_INIT_STEP_LAT_PULSES, 11, 0},
-    {SPWM_INIT_STEP_LAT_PULSES, 14, 0},
-    {SPWM_INIT_STEP_REGISTER, 1, 0},
-    {SPWM_INIT_STEP_REGISTER, 2, 0},
-    {SPWM_INIT_STEP_RGB_REGISTER, 3, 0},
-    {SPWM_INIT_STEP_REGISTER, 4, 0},
-    {SPWM_INIT_STEP_REGISTER, 5, 0},
+    // LAT pulses | Row lines left at 0 | Spacer CLKs.
+    {SPWM_INIT_STEP_LAT_PULSES, 3, 0, 0},   // 3 LAT pulses, row lines left at 0, no spacer clocks.
+    {SPWM_INIT_STEP_LAT_PULSES, 11, 0, 0},  // 11 LAT pulses, row lines left at 0, no spacer clocks.
+    {SPWM_INIT_STEP_LAT_PULSES, 14, 0, 0},  // 14 LAT pulses, row lines left at 0, no spacer clocks.
+    {SPWM_INIT_STEP_REGISTER, 1, 0, 0},     // Send fixed register 1, row lines left at 0, no spacer clocks.
+    {SPWM_INIT_STEP_REGISTER, 2, 0, 0},     // Send fixed register 2, row lines left at 0, no spacer clocks.
+    {SPWM_INIT_STEP_RGB_REGISTER, 3, 0, 0}, // Send RGB register 3, row lines left at 0, no spacer clocks.
+    {SPWM_INIT_STEP_REGISTER, 4, 0, 0},     // Send fixed register 4, row lines left at 0, no spacer clocks.
+    {SPWM_INIT_STEP_REGISTER, 5, 0, 0},     // Send fixed register 5, row lines left at 0, no spacer clocks.
 };
 
 static const SPWM_Init_Sequence SPWM_FM6373_INIT_SEQUENCE =
@@ -211,6 +241,128 @@ SPWM_Config spwm_create_fm6373_config(const SPWM_Panel_Settings &spwm_settings,
 }
 
 // -------------------------------------------------------------------------------------------------
+// ICND1065L profile definition.
+// This follows the FM6373/SPWM upload structure but uses the captured
+// ICND1065L register-3 RGB payload.
+// -------------------------------------------------------------------------------------------------
+
+static const size_t SPWM_ICND1065L_REGISTER_COUNT = 5;
+static const uint8_t SPWM_ICND1065L_REGISTER_SEND_LAT[][1] = {
+    {5},
+    {5},
+    {5},
+    {5},
+    {5},
+};
+static const SPWM_Register_Timing SPWM_ICND1065L_REGISTER_TIMINGS[] = {
+    spwm_make_register_timing(SPWM_ICND1065L_REGISTER_SEND_LAT[0]),
+    spwm_make_register_timing(SPWM_ICND1065L_REGISTER_SEND_LAT[1]),
+    spwm_make_register_timing(SPWM_ICND1065L_REGISTER_SEND_LAT[2]),
+    spwm_make_register_timing(SPWM_ICND1065L_REGISTER_SEND_LAT[3]),
+    spwm_make_register_timing(SPWM_ICND1065L_REGISTER_SEND_LAT[4]),
+};
+
+static const SPWM_Panel_Settings SPWM_ICND1065L_SETTINGS = []() {
+  SPWM_Panel_Settings spwm_settings = spwm_make_default_panel_settings();
+  spwm_settings.auto_tune_oe_gaps = false;
+  spwm_settings.auto_tune_frames = 0;
+  spwm_settings.auto_tune_max_step_clks = 0;
+  spwm_settings.first_oe_clk_length = 12;
+  spwm_settings.end_of_frame_extra_row_cycles = 5;
+  spwm_settings.frame_end_sleep_us = 300;
+  spwm_settings.oe_during_upload_clk_count = 140;
+  spwm_settings.oe_after_upload_clk_count = 140;
+  spwm_settings.oe_clk_look_behind = 0;
+  spwm_settings.oe_clk_length = 4;
+  spwm_settings.shiftreg_row_select_a_pulse_clk_count = 6;
+  spwm_settings.oe_style = SPWM_OE_STYLE_FM6373;
+  return spwm_settings;
+}();
+static const uint16_t SPWM_ICND1065L_REGISTER1_WORD = 0x00AA;
+static const uint16_t SPWM_ICND1065L_REGISTER2_WORD = 0x01AA;
+static const uint16_t SPWM_ICND1065L_REGISTER4_WORD = 0x0055;
+static const uint16_t SPWM_ICND1065L_REGISTER5_WORD = 0x0155;
+
+// Register block 3 carries the per-frame RGB control words for ICND1065L.
+static const uint16_t SPWM_ICND1065L_BLOCK3_SEQ_R[] = {
+    0x0000, 0x026a, 0x0322, 0x0412, 0x0500, 0x0601, 0x0712, 0x0c10,
+    0x0d02, 0x0e84, 0x0f01, 0x1040, 0x1127, 0x1800, 0x1926, 0x1c60,
+    0x1d02, 0x1e71, 0x2040, 0x2101, 0x2380, 0x74a0,
+};
+
+static const uint16_t SPWM_ICND1065L_BLOCK3_SEQ_G[] = {
+    0x0000, 0x026a, 0x0322, 0x0412, 0x0500, 0x0601, 0x0712, 0x0c10,
+    0x0d04, 0x0e84, 0x0f01, 0x1040, 0x1127, 0x1800, 0x1908, 0x1c60,
+    0x1d02, 0x1e92, 0x2060, 0x2101, 0x2305, 0x74a0,
+};
+
+static const uint16_t SPWM_ICND1065L_BLOCK3_SEQ_B[] = {
+    0x0000, 0x026a, 0x0322, 0x0412, 0x0500, 0x0601, 0x0712, 0x0c10,
+    0x0d03, 0x0e84, 0x0f11, 0x1040, 0x1127, 0x1800, 0x190a, 0x1c60,
+    0x1d02, 0x1eb5, 0x2060, 0x2101, 0x2300, 0x74a0,
+};
+
+// ICND1065L frame start mirrors FM6373: emit LAT bursts of 3, 11, and 14
+// clocks, each with an optional trailing LAT-low spacer count, then stream
+// register blocks 1-5 with block 3 coming from the rotating RGB register
+// sequence above.
+static const SPWM_Init_Step SPWM_ICND1065L_INIT_STEPS[] = {
+    // LAT pulses | Row lines left at 0 | Spacer CLKs.
+    {SPWM_INIT_STEP_LAT_PULSES, 3, 0, 12},
+    {SPWM_INIT_STEP_LAT_PULSES, 11, 0, 3},
+    {SPWM_INIT_STEP_LAT_PULSES, 14, 0, 9},
+    {SPWM_INIT_STEP_REGISTER, 1, 0, 0},
+    {SPWM_INIT_STEP_REGISTER, 2, 0, 0},
+    {SPWM_INIT_STEP_RGB_REGISTER, 3, 0, 0},
+    {SPWM_INIT_STEP_REGISTER, 4, 0, 0},
+    {SPWM_INIT_STEP_REGISTER, 5, 0, 0},
+};
+
+static const SPWM_Init_Sequence SPWM_ICND1065L_INIT_SEQUENCE =
+    spwm_make_init_sequence(SPWM_ICND1065L_INIT_STEPS);
+
+// Some 172-column ICND1065L receivers still shift 176 physical RGB slots per
+// row. Four internal chain positions are not bonded to LEDs, so the uploader
+// has to skip those physical slots instead of padding only at the tail.
+SPWM_Panel_Settings spwm_resolve_icnd1065l_settings(int spwm_columns) {
+  SPWM_Panel_Settings spwm_settings = SPWM_ICND1065L_SETTINGS;
+  const int spwm_resolved_columns =
+      spwm_columns > 0 ? spwm_columns : spwm_settings.default_columns;
+  spwm_apply_missing_column_layout(&spwm_settings, spwm_resolved_columns, 172,
+                                   SPWM_SPARSE_172_COLUMN_LAYOUT);
+  return spwm_settings;
+}
+
+// Purpose: Build the ICND1065L register layout for the active panel width.
+// Inputs: Panel timing/settings and the resolved column count.
+// Outputs: A runtime register bundle with repeated fixed words and RGB sequence data.
+// Side effects: None.
+SPWM_Config spwm_create_icnd1065l_config(
+    const SPWM_Panel_Settings &spwm_settings, int spwm_columns) {
+  SPWM_Config spwm_config(SPWM_ICND1065L_REGISTER_COUNT,
+                          SPWM_ICND1065L_REGISTER_TIMINGS[0],
+                          spwm_resolve_register_repeat_count(spwm_settings,
+                                                             spwm_columns));
+
+  spwm_config.spwm_add_register(1, {SPWM_ICND1065L_REGISTER1_WORD},
+                                &SPWM_ICND1065L_REGISTER_TIMINGS[0]);
+  spwm_config.spwm_add_register(2, {SPWM_ICND1065L_REGISTER2_WORD},
+                                &SPWM_ICND1065L_REGISTER_TIMINGS[1]);
+  spwm_config.spwm_add_rgb_register(
+      3,
+      {spwm_make_words(SPWM_ICND1065L_BLOCK3_SEQ_R),
+       spwm_make_words(SPWM_ICND1065L_BLOCK3_SEQ_G),
+       spwm_make_words(SPWM_ICND1065L_BLOCK3_SEQ_B)},
+      SPWM_ICND1065L_REGISTER_TIMINGS[2]);
+  spwm_config.spwm_add_register(4, {SPWM_ICND1065L_REGISTER4_WORD},
+                                &SPWM_ICND1065L_REGISTER_TIMINGS[3]);
+  spwm_config.spwm_add_register(5, {SPWM_ICND1065L_REGISTER5_WORD},
+                                &SPWM_ICND1065L_REGISTER_TIMINGS[4]);
+
+  return spwm_config;
+}
+
+// -------------------------------------------------------------------------------------------------
 // SM16380SH profile definition.
 // This stays close to the FM6373 upload path but uses a shorter init script,
 // one extra fixed register, and a different leading-OE length.
@@ -237,7 +389,6 @@ static const SPWM_Register_Timing SPWM_SM16380SH_REGISTER_TIMINGS[] = {
 static const SPWM_Panel_Settings SPWM_SM16380SH_SETTINGS = []() {
   SPWM_Panel_Settings spwm_settings = spwm_make_default_panel_settings();
   spwm_settings.first_oe_clk_length = 10;  
-  spwm_settings.end_of_frame_extra_row_cycles = 27;
   spwm_settings.oe_clk_look_behind = 16;
   return spwm_settings;
 }();
@@ -271,18 +422,19 @@ static const uint16_t SPWM_SM16380SH_BLOCK3_SEQ_B[] = {
     0x1c8f, 0x1d00, 0x1e00, 0x1f0c, 0x2000, 0x2200,
 };
 
-// SM16380SH frame start: emit LAT bursts of 3 and 14 clocks, then stream
-// register blocks 1-6 with block 3 coming from the rotating RGB register
-// sequence above.
+// SM16380SH frame start: emit LAT bursts of 3 and 14 clocks, each with an
+// optional trailing LAT-low spacer count, then stream register blocks 1-6 with
+// block 3 coming from the rotating RGB register sequence above.
 static const SPWM_Init_Step SPWM_SM16380SH_INIT_STEPS[] = {
-    {SPWM_INIT_STEP_LAT_PULSES, 3, 0},
-    {SPWM_INIT_STEP_LAT_PULSES, 14, 0},
-    {SPWM_INIT_STEP_REGISTER, 1, 0},
-    {SPWM_INIT_STEP_REGISTER, 2, 0},
-    {SPWM_INIT_STEP_RGB_REGISTER, 3, 0},
-    {SPWM_INIT_STEP_REGISTER, 4, 0},
-    {SPWM_INIT_STEP_REGISTER, 5, 0},
-    {SPWM_INIT_STEP_REGISTER, 6, 0},
+    // LAT pulses | Row lines left at 0 | Spacer CLKs.
+    {SPWM_INIT_STEP_LAT_PULSES, 3, 0, 6},
+    {SPWM_INIT_STEP_LAT_PULSES, 14, 0, 8},
+    {SPWM_INIT_STEP_REGISTER, 1, 0, 0},
+    {SPWM_INIT_STEP_REGISTER, 2, 0, 0},
+    {SPWM_INIT_STEP_RGB_REGISTER, 3, 0, 0},
+    {SPWM_INIT_STEP_REGISTER, 4, 0, 0},
+    {SPWM_INIT_STEP_REGISTER, 5, 0, 0},
+    {SPWM_INIT_STEP_REGISTER, 6, 0, 0},
 };
 
 static const SPWM_Init_Sequence SPWM_SM16380SH_INIT_SEQUENCE =
@@ -352,10 +504,10 @@ static const SPWM_Panel_Settings SPWM_FM6363_SETTINGS = []() {
   spwm_settings.auto_tune_frames = 0;
   spwm_settings.auto_tune_max_step_clks = 0;
   spwm_settings.first_oe_clk_length = 78;
-  spwm_settings.end_of_frame_extra_row_cycles = 3;
+  spwm_settings.end_of_frame_extra_row_cycles = 10;
   spwm_settings.frame_end_sleep_us = 100;
-  spwm_settings.oe_during_upload_clk_count = 500;
-  spwm_settings.oe_after_upload_clk_count = 500;
+  spwm_settings.oe_during_upload_clk_count = 212;
+  spwm_settings.oe_after_upload_clk_count = 212;
   spwm_settings.oe_clk_look_behind = 0;
   spwm_settings.oe_clk_length = 74;
   spwm_settings.oe_style = SPWM_OE_STYLE_FM6363;
@@ -367,18 +519,20 @@ static const uint16_t SPWM_FM6363_REGISTER3_WORD = 0x20b6;
 static const uint16_t SPWM_FM6363_REGISTER4_WORD = 0x1a00;
 static const uint16_t SPWM_FM6363_REGISTER5_WORD = 0x7e08;
 
-// FM6363 frame start: emit the wake-up LAT bursts, then stream the five fixed
-// control registers with their per-register LAT postambles.
+// FM6363 frame start: emit the wake-up LAT bursts, each with an optional
+// trailing LAT-low spacer count, then stream the five fixed control registers
+// with their per-register LAT postambles.
 static const SPWM_Init_Step SPWM_FM6363_INIT_STEPS[] = {
-    {SPWM_INIT_STEP_LAT_PULSES, 14, 0},
-    {SPWM_INIT_STEP_LAT_PULSES, 12, 0},
-    {SPWM_INIT_STEP_LAT_PULSES, 3, 0},
-    {SPWM_INIT_STEP_LAT_PULSES, 14, 0},
-    {SPWM_INIT_STEP_REGISTER, 1, 0},
-    {SPWM_INIT_STEP_REGISTER, 2, 0},
-    {SPWM_INIT_STEP_REGISTER, 3, 0},
-    {SPWM_INIT_STEP_REGISTER, 4, 0},
-    {SPWM_INIT_STEP_REGISTER, 5, 0},
+    // LAT pulses | Row lines left at 0 | Spacer CLKs.
+    {SPWM_INIT_STEP_LAT_PULSES, 14, 0, 0},
+    {SPWM_INIT_STEP_LAT_PULSES, 12, 0, 0},
+    {SPWM_INIT_STEP_LAT_PULSES, 3, 0, 0},
+    {SPWM_INIT_STEP_LAT_PULSES, 14, 0, 0},
+    {SPWM_INIT_STEP_REGISTER, 1, 0, 0},
+    {SPWM_INIT_STEP_REGISTER, 2, 0, 0},
+    {SPWM_INIT_STEP_REGISTER, 3, 0, 0},
+    {SPWM_INIT_STEP_REGISTER, 4, 0, 0},
+    {SPWM_INIT_STEP_REGISTER, 5, 0, 0},
 };
 
 static const SPWM_Init_Sequence SPWM_FM6363_INIT_SEQUENCE =
@@ -409,11 +563,20 @@ SPWM_Config spwm_create_fm6363_config(const SPWM_Panel_Settings &spwm_settings,
   return spwm_config;
 }
 
+// This table describes panel-tied behavior only: init sequence, register
+// payloads, default OE timing, and panel geometry defaults. The runtime row
+// transport still comes from --led-spwm-row-addr-type, so a profile such as
+// FM6363 can keep its OE timing while using either direct A-E or blank-clock
+// row transport.
 static const SPWM_Panel_Profile SPWM_PANEL_PROFILES[] = {
     {"fm6373",
      SPWM_FM6373_SETTINGS,
      spwm_create_fm6373_config,
      SPWM_FM6373_INIT_SEQUENCE},
+    {"icnd1065l",
+     SPWM_ICND1065L_SETTINGS,
+     spwm_create_icnd1065l_config,
+     SPWM_ICND1065L_INIT_SEQUENCE},
     {"sm16380sh",
      SPWM_SM16380SH_SETTINGS,
      spwm_create_sm16380sh_config,
@@ -442,6 +605,15 @@ const SPWM_Panel_Profile *spwm_find_panel_profile(const char *spwm_panel_type) {
     }
   }
   return nullptr;
+}
+
+SPWM_Panel_Settings spwm_resolve_profile_settings(
+    const SPWM_Panel_Profile &spwm_profile, int spwm_columns) {
+  if (spwm_profile.panel_type != nullptr &&
+      strcasecmp(spwm_profile.panel_type, "icnd1065l") == 0) {
+    return spwm_resolve_icnd1065l_settings(spwm_columns);
+  }
+  return spwm_profile.settings;
 }
 
 }  // namespace internal

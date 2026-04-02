@@ -47,6 +47,14 @@
 namespace rgb_matrix {
 namespace {
 
+bool SpwmUsesExtendedRowRange(const RGBMatrix::Options &options) {
+  return internal::spwm_is_panel_type(options.panel_type) &&
+         (options.spwm_row_address_type ==
+              internal::SPWM_ROW_ADDRESS_TYPE_1_SHIFTREG_BLANK_CLOCK ||
+          options.spwm_row_address_type ==
+              internal::SPWM_ROW_ADDRESS_TYPE_2_SHIFTREG_AB_BLANK_CLOCK);
+}
+
 uint64_t GetMonotonicNanos() {
   struct timespec ts;
 #ifdef CLOCK_MONOTONIC_RAW
@@ -350,6 +358,7 @@ RGBMatrix::Options::Options() :
 
   row_address_type(0),
   spwm_row_address_type(0),
+  spwm_scan_rows(0),
   multiplexing(0),
 
 #ifdef DISABLE_HARDWARE_PULSES
@@ -405,6 +414,7 @@ static void PrintOptions(const RGBMatrix::Options &o) {
   P_INT(scan_mode);
   P_INT(row_address_type);
   P_INT(spwm_row_address_type);
+  P_INT(spwm_scan_rows);
   P_INT(multiplexing);
   P_BOOL(disable_hardware_pulsing);
   P_BOOL(show_refresh_rate);
@@ -527,7 +537,8 @@ void RGBMatrix::Impl::SetGPIO(GPIO *io, bool start_thread) {
                           params_.spwm_row_address_type);
     Framebuffer::InitializePanels(io_, params_.panel_type,
                                   params_.cols * params_.chain_length,
-                                  params_.spwm_row_address_type);
+                                  params_.spwm_row_address_type,
+                                  params_.spwm_scan_rows);
   }
   if (start_thread) {
     StartRefresh();
@@ -553,6 +564,7 @@ bool RGBMatrix::Impl::StartRefresh() {
 }
 
 FrameCanvas *RGBMatrix::Impl::CreateFrameCanvas() {
+  const bool allow_large_spwm_rows = SpwmUsesExtendedRowRange(params_);
   FrameCanvas *result =
     new FrameCanvas(new Framebuffer(params_.rows,
                                     params_.cols * params_.chain_length,
@@ -560,6 +572,7 @@ FrameCanvas *RGBMatrix::Impl::CreateFrameCanvas() {
                                     params_.scan_mode,
                                     params_.led_rgb_sequence,
                                     params_.inverse_colors,
+                                    allow_large_spwm_rows,
                                     &shared_pixel_mapper_));
   if (created_frames_.empty()) {
     // First time. Get defaults from initial Framebuffer.

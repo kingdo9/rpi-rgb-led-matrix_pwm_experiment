@@ -24,6 +24,7 @@ struct SPWM_Init_Step {
   SPWM_Init_Step_Type type;
   uint8_t value;  // LAT pulse count or register index.
   uint8_t row;    // Row bits to leave on A-E after the step completes.
+  uint8_t space_clocks;  // Extra LAT-low spacer clocks after the step.
 };
 
 // Ordered list of init steps emitted before regular RGB data upload begins.
@@ -46,6 +47,11 @@ const SPWM_Panel_Profile &spwm_get_default_panel_profile();
 
 // Return the matching SPWM panel profile for `panel_type`, if any.
 const SPWM_Panel_Profile *spwm_find_panel_profile(const char *panel_type);
+
+// Resolve the effective settings for one profile at the requested width so
+// panel-specific geometry quirks can stay co-located with the profile.
+SPWM_Panel_Settings spwm_resolve_profile_settings(
+    const SPWM_Panel_Profile &profile, int columns);
 
 }  // namespace internal
 }  // namespace rgb_matrix

@@ -81,6 +81,7 @@ static struct RGBLedMatrix *led_matrix_create_from_options_optional_edit(
     OPT_COPY_IF_SET(scan_mode);
     OPT_COPY_IF_SET(row_address_type);
     OPT_COPY_IF_SET(spwm_row_address_type);
+    OPT_COPY_IF_SET(spwm_scan_rows);
     OPT_COPY_IF_SET(multiplexing);
     OPT_COPY_IF_SET(disable_hardware_pulsing);
     OPT_COPY_IF_SET(show_refresh_rate);
@@ -129,6 +130,7 @@ static struct RGBLedMatrix *led_matrix_create_from_options_optional_edit(
     ACTUAL_VALUE_BACK_TO_OPT(scan_mode);
     ACTUAL_VALUE_BACK_TO_OPT(row_address_type);
     ACTUAL_VALUE_BACK_TO_OPT(spwm_row_address_type);
+    ACTUAL_VALUE_BACK_TO_OPT(spwm_scan_rows);
     ACTUAL_VALUE_BACK_TO_OPT(multiplexing);
     ACTUAL_VALUE_BACK_TO_OPT(disable_hardware_pulsing);
     ACTUAL_VALUE_BACK_TO_OPT(show_refresh_rate);

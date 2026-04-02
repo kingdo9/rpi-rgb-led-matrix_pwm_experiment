@@ -37,9 +37,12 @@ enum SPWM_OE_Style {
 enum SPWM_Row_Address_Type {
   SPWM_ROW_ADDRESS_TYPE_0_DIRECT_AE = 0,
   SPWM_ROW_ADDRESS_TYPE_1_SHIFTREG_BLANK_CLOCK = 1,
+  SPWM_ROW_ADDRESS_TYPE_2_SHIFTREG_AB_BLANK_CLOCK = 2,
 };
 
 struct SPWM_Panel_Settings {
+  static const int kMaxMissingColumnSlots = 4;
+
   int default_rows;               // Default panel row count for this profile.
   int default_columns;            // Default panel column count for this profile.
   int upload_channels_per_chip;   // Driver outputs per cascaded chip.
@@ -63,12 +66,17 @@ struct SPWM_Panel_Settings {
   
   
   // Shift-register blank-clock row-select Channel A pulse controls.
-  // These defaults are attached to --led-spwm-row-addr-type=1 and can still
-  // be overridden through the environment.
+  // These defaults are attached to the blank-clock row-select transports and
+  // can still be overridden through the environment.
   int shiftreg_row_select_a_pulse_clk_count;  // SPWM_SHIFT_REG_ROW_SELECT_A_PULSE_CLK_COUNT
   bool shiftreg_row_select_a_pulse_centered;  // SPWM_SHIFT_REG_ROW_SELECT_A_PULSE_CENTERED
   int shiftreg_row_select_a_pulse_start_clk;  // SPWM_SHIFT_REG_ROW_SELECT_A_PULSE_START_CLK
-  
+
+  // Some panels expose fewer visible columns than the physical shift chain.
+  // These positions are physical clock slots that should stay blank during RGB
+  // upload and not consume a visible framebuffer column.
+  int missing_column_count;
+  int missing_column_positions[kMaxMissingColumnSlots];
 };
 
 // Register timing expressed as one or more LAT-high sections, optionally
@@ -161,13 +169,14 @@ bool spwm_is_panel_type(const char *panel_type);
 // Select the active SPWM profile for `panel_type` and enable SPWM refresh when
 // the panel type is handled by the SPWM path.
 bool spwm_initialize_panel_type(const char *panel_type, int columns,
-                                int spwm_row_address_type);
+                                int spwm_row_address_type,
+                                int spwm_scan_rows);
 
-// Load the selected panel profile into the runtime state, apply row-select
-// transport defaults, rebuild any width-dependent register layout, and then
-// apply environment overrides.
+// Load the selected panel profile into the runtime state, rebuild any
+// width-dependent register layout, and then apply environment overrides.
 void spwm_configure_panel_type(const char *panel_type, int columns,
-                               int spwm_row_address_type);
+                               int spwm_row_address_type,
+                               int spwm_scan_rows);
 
 // Return the currently active panel settings after profile selection and
 // override handling.
