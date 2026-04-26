@@ -1815,6 +1815,7 @@ void spwm_align_frame_end_to_row_wrap(
   const int spwm_last_row = spwm_double_rows - 1;
   const bool spwm_blank_clock_row_transport =
       spwm_uses_blank_clock_row_select(spwm_row_setter);
+  const bool spwm_type2_shiftreg_align = spwm_blank_clock_row_transport && spwm_get_runtime_state().row_address_type == SPWM_ROW_ADDRESS_TYPE_2_SHIFTREG_AB_BLANK_CLOCK;
   const int spwm_wrap_completion_clks =
       spwm_blank_clock_row_transport
           ? spwm_get_shiftreg_wrap_completion_clks(spwm_align_scan_config)
@@ -1828,9 +1829,18 @@ void spwm_align_frame_end_to_row_wrap(
 
   for (int64_t spwm_clk = 0; spwm_clk < spwm_max_align_clks; ++spwm_clk) {
     const int spwm_previous_row = spwm_scan_state->row;
+    SPWM_OE_Gate_State *spwm_align_oe_gate = spwm_oe_gate;
+
+    // SPWM_ROW_ADDRESS_TYPE_2_SHIFTREG_AB_BLANK_CLOCK - Exception
+    if (spwm_type2_shiftreg_align && spwm_wrapped) {
+      // Keep the type-2 wrap timing, but do not light the wrapped row-0
+      // cleanup cycle. The ordinary last-row A/B pulse should still keep its
+      // OE window; only the tail wrap pulse itself needs to stay dark.
+      spwm_align_oe_gate = nullptr;
+    }
     const bool spwm_advanced_row = spwm_scan_pre_clock_handler(
         io, h, spwm_row_setter, spwm_double_rows, spwm_align_scan_config,
-        spwm_oe_gate, spwm_scan_state);
+        spwm_align_oe_gate, spwm_scan_state);
 
     if (spwm_advanced_row && spwm_previous_row == spwm_last_row &&
         spwm_scan_state->row == 0) {
@@ -1838,7 +1848,7 @@ void spwm_align_frame_end_to_row_wrap(
       spwm_wrap_elapsed_clks = 0;
     }
 
-    spwm_clock_pulse(io, h, 0, spwm_data_mask, spwm_oe_gate);
+    spwm_clock_pulse(io, h, 0, spwm_data_mask, spwm_align_oe_gate);
     spwm_scan_post_clock(spwm_align_scan_config, spwm_scan_state);
     if (spwm_wrap_elapsed_clks >= 0) {
       ++spwm_wrap_elapsed_clks;
@@ -2402,8 +2412,15 @@ void spwm_dump_to_matrix(GPIO *io, const HardwareMapping &h,
   // Finish on a clean row-wrap boundary so the next frame starts from a
   // predictable scan position.
   SPWM_Scan_Config spwm_align_scan_config = spwm_free_scan_config;
-  spwm_align_scan_config.row_before_oe = true;
-  spwm_refresh_scan_config_derived_fields(&spwm_align_scan_config);
+  const int spwm_row_address_type = spwm_get_runtime_state().row_address_type;
+  // Ensures TYPE_2_SHIFTREG_AB_BLANK_CLOCK - OE stays aligned with Channel A/B pulse.
+  if (spwm_row_address_type !=
+      SPWM_ROW_ADDRESS_TYPE_2_SHIFTREG_AB_BLANK_CLOCK) {
+    // TYPE_2_SHIFTREG_AB_BLANK_CLOCK relies on the normal FM6373-style OE/B overlap to keep the final
+    // wrap pulse aligned with the rest of the frame, so preserve that runtime timing instead of forcing the row advance ahead of OE here.
+    spwm_align_scan_config.row_before_oe = true;
+    spwm_refresh_scan_config_derived_fields(&spwm_align_scan_config);
+  }
   spwm_oe_gate.section = SPWM_AUTO_TUNE_SECTION_FREE;
   spwm_align_frame_end_to_row_wrap(
       io, h, spwm_rgb_mask, spwm_data_mask, spwm_row_setter,
