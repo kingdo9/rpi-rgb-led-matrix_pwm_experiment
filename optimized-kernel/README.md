@@ -1,8 +1,8 @@
-# Real Time Kernel
+# Optimized Kernel
 
-If you are using SPWM displays or normal displays without the PWM hardware modification; to help with flickering it is highly recommended to flash this optimized kernel.
+If you are using SPWM displays or normal displays without the PWM hardware modification; to help with flickering it is highly recommended to flash this optimized kernel. RT kernels can be a detrimental and can cause additional CPU usage.
 
-First perform the below **cmdline.txt** modification, this also helps with intermittent flicker especially when combined with the real time kernel as guided below. Apply this regardless of using RT kernel or not, as it helps with interrupts on Core 3 which is what the library uses to refresh the display.
+First perform the below **cmdline.txt** modification, this also helps with intermittent flicker especially when combined with this kernel as guided below. Apply this regardless of using the optimized kernel or not, as it helps with interrupts on Core 3 which is what the library uses to refresh the display.
 ```
 nano /boot/firmware/cmdline.txt
 
@@ -13,9 +13,9 @@ isolcpus=domain,managed_irq,2,3 nohz_full=2,3 rcu_nocbs=2,3 irqaffinity=0,1 idle
 
 [Option 1 - Download Preinstalled Image - Pi 4 / 3 / Zero 2W - Trixie 64-bit Lite](#option-1---download-preinstalled-trixie-image---64-bit-lite)
 
-[Option 2 - Copy RT Kernel To Your Current Raspberry OS installation](#option-2---copy-rt-kernel-to-your-current-raspberry-os-installation)
+[Option 2 - Copy Optimized Kernel To Your Current Raspberry OS installation](#option-2---copy-optimized-kernel-to-your-current-raspberry-os-installation)
 
-[Option 3 - Compile and Apply Your Own Raspberry Real Time Kernel](#option-3---compile-and-install-your-own-raspberry-real-time-kernel)
+[Option 3 - Compile and Apply Your Own Raspberry Optimized Kernel](#option-3---compile-and-install-your-own-raspberry-optimized-kernel)
 
 [Recommended Performance Mods](#performance-mods)
 
@@ -25,13 +25,13 @@ isolcpus=domain,managed_irq,2,3 nohz_full=2,3 rcu_nocbs=2,3 irqaffinity=0,1 idle
 
 ## Option 1 - Download Preinstalled Trixie Image - 64-bit Lite
 
-Full image with Hzeller library installed + RT Kernel.
+Full image with Hzeller library installed + Optimized Kernel.
 
-<a href="https://mega.nz/file/GIV3GDLT#iKld0ksdm9_DLyfXxmwsLUGSX-MUSiR_OlDA7YLemrM">Raspberry Pi 4 Lite Trixie 64-Bit - RT Kernel Preinstalled image</a>
+<a href="https://mega.nz/file/qclnQC4S#OdPOqmoX6tX7EIIudm0o0-DywqO8erW64bRiiKbWRJ8">Raspberry Pi 4 Lite Trixie 64-Bit - Optimized Kernel Preinstalled image</a>
 
-Raspberry Pi 3 Trixie 64-Bit - RT Kernel Preinstalled image (update soon)</a>
+Raspberry Pi 3 Trixie 64-Bit - Optimized Kernel Preinstalled image (update soon)</a>
 
-<a href="https://mega.nz/file/GMEi3TjL#mWLY3-WOkyQ61l7Npd5_LRvrowKYY6kGFY_AdX-o8H4">Raspberry Pi Zero 2W Lite Trixie 64-Bit - RT Kernel Preinstalled image</a>
+<a href="https://mega.nz/file/ONMmWSIb#8mApRAdLE3P68r4vlO08E3pK31J_eHNOdiVi6WTzmbE">Raspberry Pi Zero 2W Lite Trixie 64-Bit - Optimized Kernel Preinstalled image</a>
 <br><br>
 **Note: first boot can take a moment to unpack image to the size of your SD card**
 
@@ -44,6 +44,8 @@ Raspberry / password1 \
 Then SSH from your phone to the connected Raspberry device. Android will show the IP of the connected device to the Hotspot when clicking (i) \
 Again use **nmtui** to change or remove the Wi-Fi connection.
 
+hzeller library is installed under /opt/rpi-rgb-led-matrix
+
 
 <img alt="Image" src="./img/kernel_guide_1.png" />
 <img alt="Image" src="./img/kernel_guide_2.png" />
@@ -51,29 +53,29 @@ Again use **nmtui** to change or remove the Wi-Fi connection.
 
 
 ---
-## Option 2 - Copy RT Kernel To Your Current Raspberry OS installation
+## Option 2 - Copy Optimized Kernel To Your Current Raspberry OS installation
 
 **This precompiled kernel is for Raspberry Pi 4 / 3 / Zero 2W - 64-bit. Alternatively [compile your own](#option-3---compile-and-install-your-own-raspberry-kernel)**
 
 Download and copy the below kernel files to your Raspberry Pi in the /tmp directory.
 
-The kernel version compiled is 6.18.18-rt
+The kernel version compiled is 6.18.24
 So its best your OS image is already close to it.
 
-[raspberry_kernel_rt_trixie_042126_v3_boot.tar.gz](./raspberry_kernel_rt_trixie_042126_v3_boot.tar.gz)
+[raspberry_kernel_optimized_trixie_042126_v4_boot.tar.gz](./raspberry_kernel_optimized_trixie_042126_v4_boot.tar.gz)
 
-[raspberry_kernel_rt_trixie_042126_v3_root.tar.gz](./raspberry_kernel_rt_trixie_042126_v3_root.tar.gz)
+[raspberry_kernel_optimized_trixie_042126_v4_root.tar.gz](./raspberry_kernel_optimized_trixie_042126_v4_root.tar.gz)
 
 
 ```
-tar -xzf /tmp/raspberry_kernel_rt_trixie*boot.tar.gz -C /boot/firmware
-tar -xzf /tmp/raspberry_kernel_rt_trixie*root.tar.gz -C /
+tar -xzf /tmp/raspberry_kernel_optimized_trixie*boot.tar.gz -C /boot/firmware
+tar -xzf /tmp/raspberry_kernel_optimized_trixie*root.tar.gz -C /
 ```
 
 Reboot and check your kernel reads
 ```
 uname -a
-Linux raspberry 6.18.18-rt-v8+ #1 SMP PREEMPT_RT
+Linux raspberry 6.18.24-v8+ #20 SMP PREEMPT
 ```
 ###########################################################
 
@@ -85,10 +87,10 @@ apt-get update; apt-get install --reinstall firmware-brcm80211
 ```
 Alternatively if using Pi 4, extract it from below. \
 Kernel firmware \
-[raspberry4_kernel_rt_trixie_042126_firmware.tar.gz](https://mega.nz/file/DdN3wAZK#FCYCSCuUvn7_p_8c8e-fSeSyJwL5Fm1Wim2NqbAF8q4)
+[raspberry_kernel_optimized_trixie_042126_firmware.tar.gz](https://mega.nz/file/yQ80gTrb#VWguAWAiNklK68PETRjvhIsXFE-PyHte-lzYurm-yVo)
 
 ```
-tar -xzf /tmp/raspberry4_kernel_rt_trixie_*_firmware.tar.gz -C /
+tar -xzf /tmp/raspberry4_kernel_optimized_trixie_*_firmware.tar.gz -C /
 ```
 Depending on what your original kernel/os image was, you may see some dmesg prompts like the below which should be fine.
 
@@ -104,7 +106,7 @@ Depending on what your original kernel/os image was, you may see some dmesg prom
 
 
 ---
-## Option 3 - Compile and Install Your Own Raspberry Real Time Kernel
+## Option 3 - Compile and Install Your Own Raspberry Optimized Kernel
  Install and start Raspberry OS, I'm using Trixie Lite 64-bit
  Find the kernel version of your current Raspberry Pi install.
 
@@ -144,22 +146,22 @@ KERNEL=kernel8
 
  **Make default config, my example as Pi 4 / 3 / Zero 2W**
 ```
-make KERNEL=kernel8 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- bcm2711_rt_defconfig
+make KERNEL=kernel8 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- bcm2711_defconfig
 ```
 
  **Other Config examples below.**
 
  **64-bit (ARCH=arm64)**
  
- Pi 3 / 3+ / CM3 / CM3+ / Zero 2 W / Pi 4 / Pi 400 / CM4 / CM4S -  `bcm2711_rt_defconfig`
+ Pi 3 / 3+ / CM3 / CM3+ / Zero 2 W / Pi 4 / Pi 400 / CM4 / CM4S -  `bcm2711_defconfig`
  
- Pi 5 / Pi 500 / CM5 - `bcm2712_rt_defconfig`
+ Pi 5 / Pi 500 / CM5 - `bcm2712_defconfig`
 
  **32-bit (ARCH=arm)**
 
- Pi 1 / CM1 / Zero / Zero W / Pi 2 - `bcmrpi_rt_defconfig`
+ Pi 1 / CM1 / Zero / Zero W / Pi 2 - `bcmrpi_defconfig`
 
- Pi 3 / 3+ / CM3 / CM3+ / Zero 2 W - `bcm2709_rt_defconfig`
+ Pi 3 / 3+ / CM3 / CM3+ / Zero 2 W - `bcm2709_defconfig`
 
  **Note: Raspberry Pi OS 32-bit on Pi 4 class devices normally uses a 64-bit kernel by default; building a true 32-bit kernel for those needs ARCH=arm and extra boot config.**
 
@@ -187,12 +189,14 @@ CONFIG_CFG80211_DEFAULT_PS=n
 CONFIG_CHECKPOINT_RESTORE=n
 CONFIG_DEBUG_FS=n
 CONFIG_DEBUG_MISC=n
+CONFIG_DETECT_HUNG_TASK=n
 CONFIG_FTRACE=n
 CONFIG_HOTPLUG_CPU=n
 CONFIG_KGDB=n
 CONFIG_KGDB_KDB=n
 CONFIG_KPROBES=n
 CONFIG_LATENCYTOP=n
+CONFIG_MAGIC_SYSRQ=n
 CONFIG_NETFILTER_XT_TARGET_AUDIT=n
 CONFIG_OSNOISE_TRACER=n
 CONFIG_PERF_EVENTS=n
@@ -278,15 +282,12 @@ make KERNEL=kernel8 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- menuconfig
 ```
 ``` 
 General Setup > Timers Subsystem > Timer tick handling > Full dynticks system (tickless)
-Ensure General Setup > Fully Preemptible Kernel (Real-Time)
-Ensure General Setup > Preemption Model - Low-Latency Desktop
 
 Save
 Exit
 ```
 
-<img alt="Image" src="./img/kernel_guide_4.png" /><br>
-<img alt="Image" src="./img/kernel_guide_5.png" /><br><br>
+<img alt="Image" src="./img/kernel_guide_4.png" /><br><br>
 
 ```
 make -j"$(nproc)" KERNEL=kernel8 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- Image.gz modules dtbs
@@ -318,7 +319,7 @@ cp /media/user/bootfs/*.dtb /media/user/bootfs/dtbbak
 cp /media/user/bootfs/overlays/*.dtb* /media/user/bootfs/overlays/dtboverlaysbak
 ```
 
- **Copy the RT Kernel to the sdcard**
+ **Copy the optimized Kernel to the sdcard**
 ```
 cp arch/arm64/boot/Image.gz /media/user/bootfs/${KERNEL}.img
 cp arch/arm64/boot/dts/broadcom/*.dtb /media/user/bootfs
@@ -327,7 +328,7 @@ sudo make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- INSTALL_MOD_PATH=/media/us
 sync
 ```
 
- **Add the Kernel parameters for RT at the end of the line - CTRL+S , CTRL+X to save in nano**
+ **Add the Kernel parameters at the end of the line - CTRL+S , CTRL+X to save in nano**
 ```
 nano /media/user/bootfs/cmdline.txt
 
@@ -337,11 +338,14 @@ isolcpus=domain,managed_irq,2,3 nohz_full=2,3 rcu_nocbs=2,3 irqaffinity=0,1 idle
 ```
 
  **Put the sdcard back into the Pi and boot**
- **Confirm Real Time kernel is now installed**
+ **Confirm Optimized kernel is now installed**
 
 ```
 uname -a
+cat /proc/interrupts
 ```
+
+<img alt="Image" src="./img/kernel_guide_5.png" />
 
 ---
 
