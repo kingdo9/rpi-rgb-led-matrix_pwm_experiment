@@ -185,6 +185,11 @@ private:
   // Of course, that means that we store unrelated bits in the frame-buffer,
   // but it allows easy access in the critical section.
   gpio_bits_t *bitplane_buffer_;
+  // Private copy used by the SPWM upload path. Snapshotted from
+  // bitplane_buffer_ at the start of each DumpToMatrixSPWM so the upload
+  // reads a consistent frame even when a non-double-buffered demo is
+  // writing into bitplane_buffer_ via SetPixel during the upload.
+  gpio_bits_t *spwm_snapshot_buffer_;
   inline gpio_bits_t *ValueAt(int double_row, int column, int bit);
 
   PixelDesignatorMap **shared_mapper_;  // Storage in RGBMatrix.
