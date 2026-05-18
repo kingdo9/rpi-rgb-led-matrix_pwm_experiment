@@ -1,6 +1,11 @@
 # Optimized Kernel
 
-If you are using SPWM displays or normal displays without the PWM hardware modification; to help with flickering it is highly recommended to flash this optimized kernel. RT kernels can be a detrimental and can cause additional CPU usage.
+To help with flickering it is highly recommended to flash this optimized kernel. 
+
+It was not necessary to include the RT feature as it can be detrimental and can cause additional CPU usage when USB ports are used. It was also not key to resolving flicker.
+
+Please ensure first that your Raspberry PI and LED Displays are receiving 5V. It might be better to power the LED displays externally. You can also check using dmesg command to ensure there are no undervoltage messages being displayed.\
+**Low voltage on either the Raspberry Pi or Display can be a common cause of flicker.**
 
 First perform the below **cmdline.txt** modification, this also helps with intermittent flicker especially when combined with this kernel as guided below. Apply this regardless of using the optimized kernel or not, as it helps with interrupts on Core 3 which is what the library uses to refresh the display.
 ```
@@ -27,11 +32,11 @@ isolcpus=domain,managed_irq,2,3 nohz_full=2,3 rcu_nocbs=2,3 irqaffinity=0,1 idle
 
 Full image with Hzeller library installed + Optimized Kernel.
 
-<a href="https://mega.nz/file/qclnQC4S#OdPOqmoX6tX7EIIudm0o0-DywqO8erW64bRiiKbWRJ8">Raspberry Pi 4 Lite Trixie 64-Bit - Optimized Kernel Preinstalled image</a>
+<a href="https://mega.nz/file/qNdDVKgR#5MKRHkTCJzRlUW5uutQtHgIVBAU_ro44r7s3yhoN3lc">Raspberry Pi 4 Lite Trixie 64-Bit - Optimized Kernel Preinstalled image</a>
 
-Raspberry Pi 3 Trixie 64-Bit - Optimized Kernel Preinstalled image (update soon)</a>
+<a href="https://mega.nz/file/edlgwBAL#ZIgeApwVc79nx495eUY4vvPcYXrGGakjoiMxD-CpnFM">Raspberry Pi 3 Trixie 64-Bit - Optimized Kernel Preinstalled image</a>
 
-<a href="https://mega.nz/file/ONMmWSIb#8mApRAdLE3P68r4vlO08E3pK31J_eHNOdiVi6WTzmbE">Raspberry Pi Zero 2W Lite Trixie 64-Bit - Optimized Kernel Preinstalled image</a>
+<a href="https://mega.nz/file/SItClTqZ#XGuSclVFvR37IaxdeKIGcM5pl-8ajG-GE7G4rC4BO6I">Raspberry Pi Zero 2W Lite Trixie 64-Bit - Optimized Kernel Preinstalled image</a>
 <br><br>
 **Note: first boot can take a moment to unpack image to the size of your SD card**
 
