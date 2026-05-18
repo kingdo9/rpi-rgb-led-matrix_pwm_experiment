@@ -49,9 +49,7 @@ you want to get started programming your own utils.
 
 Panels supported
 ----------------
-This library does not support PWM panels (which actually are better, but need
-a completely different driver).\
-It should support most other panels with direct addressing (3 to 5 address lines,
+The library supports most panels with direct addressing (3 to 5 address lines,
 ABC for 8x2=16 lines, ABCD for 16x2=32 lines, and ABCDE for 32x2=64 lines).
 It also supports panels using shift registers for line addressing, also called ABC
 panels up to 64 lines.\
@@ -70,6 +68,7 @@ lib, as it only supports non PWM panels (until someone contributes PWM support).
 
 PWM / E-PWM / S-PWM Panels
 ----------------------
+These newer panel types currently have limited and experimental support.
 SPWM panels currently supported by this tree:
 
 - FM6373 + DP32019B direct row selection: \
@@ -78,6 +77,10 @@ SPWM panels currently supported by this tree:
 
 - ICND1065L + shift-register row selection: \
   `--led-panel-type=icnd1065l --led-rows=86 --led-cols=172 --led-spwm-row-addr-type=2 --led-spwm-scan=43`
+<br>
+
+- FM6353: \
+  `--led-panel-type=fm6353 --led-spwm-row-addr-type=1`
 <br>
 
 - FM6363 + DP32020A shift-register row selection: \
@@ -90,7 +93,7 @@ SPWM panels currently supported by this tree:
 
 Shared SPWM flags:
 
-- `--led-spwm-row-addr-type=<0..2>` selects the SPWM row-address transport.
+- `--led-spwm-row-addr-type=<0..1>` selects the SPWM row-address transport.
 - `--led-spwm-scan=<rows>` overrides the SPWM scan-row count e.g values such as `43` for 1/43.
 
 [SPWM Tuning Guide](./spwm.md)

@@ -387,6 +387,7 @@ Framebuffer::Framebuffer(int rows, int columns, int parallel,
     pwm_bits_(kBitPlanes), do_luminance_correct_(true), brightness_(100),
     double_rows_(rows / SUB_PANELS_),
     buffer_size_(double_rows_ * columns_ * kBitPlanes * sizeof(gpio_bits_t)),
+    spwm_snapshot_buffer_(NULL),
     shared_mapper_(mapper) {
   assert(hardware_mapping_ != NULL);   // Called InitHardwareMapping() ?
   assert(shared_mapper_ != NULL);  // Storage should be provided by RGBMatrix.
@@ -402,8 +403,6 @@ Framebuffer::Framebuffer(int rows, int columns, int parallel,
   assert(parallel >= 1 && parallel <= 6);
 
   bitplane_buffer_ = new gpio_bits_t[double_rows_ * columns_ * kBitPlanes];
-  spwm_snapshot_buffer_ =
-      new gpio_bits_t[double_rows_ * columns_ * kBitPlanes];
 
   // If we're the first Framebuffer created, the shared PixelMapper is
   // still NULL, so create one.
@@ -1046,13 +1045,17 @@ void Framebuffer::DumpToMatrix(GPIO *io, int pwm_low_bit) {
 }
 
 void Framebuffer::DumpToMatrixSPWM(GPIO *io) {
-  // Snapshot the live bitplane buffer once per frame. Demos that draw via
-  // SetPixel into RGBMatrix::canvas() without SwapOnVSync would otherwise
-  // race the slow SPWM upload, producing visible tearing or corruption
-  // because R1/G1/B1 bytes and R2/G2/B2 bytes get sampled at different
-  // wall-clock points within a single upload pass.
-  memcpy(spwm_snapshot_buffer_, bitplane_buffer_,
-         sizeof(*bitplane_buffer_) * double_rows_ * columns_ * kBitPlanes);
+  if (spwm_snapshot_buffer_ == NULL) {
+    spwm_snapshot_buffer_ =
+        new gpio_bits_t[buffer_size_ / sizeof(*spwm_snapshot_buffer_)];
+  }
+  // Snapshot the live buffer once per SPWM upload. Live-canvas drawing can
+  // still race during this memcpy, but the slow upload then reads from a fixed
+  // buffer instead of sampling SetPixel writes throughout the scan.
+  // Demos that draw via SetPixel into RGBMatrix::canvas() without SwapOnVSync would otherwise
+  // race the slow SPWM upload, producing visible tearing or corruption because R1/G1/B1 bytes and R2/G2/B2 bytes 
+  // get sampled at different wall-clock points within a single upload pass.
+  memcpy(spwm_snapshot_buffer_, bitplane_buffer_, buffer_size_);
   const SPWM_Framebuffer_View spwm_framebuffer_view = {
       spwm_snapshot_buffer_,
       rows_,
