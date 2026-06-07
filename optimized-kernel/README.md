@@ -67,9 +67,9 @@ Download and copy the below kernel files to your Raspberry Pi in the /tmp direct
 The kernel version compiled is 6.18.24
 So its best your OS image is already close to it.
 
-[raspberry_kernel_optimized_trixie_042126_v4_boot.tar.gz](./raspberry_kernel_optimized_trixie_042126_v4_boot.tar.gz)
+[raspberry_kernel_optimized_trixie_042126_v4_boot.tar.gz](https://mega.nz/file/uMEinYQK#1tVMnLgWHIlgSQefoOxp5QbH-lIDSJw8IThOiwdmUKA)
 
-[raspberry_kernel_optimized_trixie_042126_v4_root.tar.gz](./raspberry_kernel_optimized_trixie_042126_v4_root.tar.gz)
+[raspberry_kernel_optimized_trixie_042126_v4_root.tar.gz](https://mega.nz/file/XR9nHAYT#0mEPu48Ps93ifD9Dggkv6OU3luf2rQoIKp9IznC79lk)
 
 
 ```
