@@ -8,8 +8,11 @@
 #include <errno.h>
 #include <limits.h>
 #include <stdlib.h>
+#include <string.h>
+#include <strings.h>
 #include <time.h>
 #include <unistd.h>
+#include <vector>
 
 namespace rgb_matrix {
 namespace internal {
@@ -270,6 +273,7 @@ struct SPWM_Runtime_State {
         scan_rows(0),
         enabled(false),
         init_sequence(spwm_get_initial_init_sequence()),
+        startup_sequence({nullptr, 0}),
         last_initial_oe_start_ns(0),
         target_initial_oe_start_ns(0),
         panel_settings(spwm_get_default_panel_profile().settings) {}
@@ -280,6 +284,7 @@ struct SPWM_Runtime_State {
   int scan_rows;
   bool enabled;
   SPWM_Init_Sequence init_sequence;
+  SPWM_Init_Sequence startup_sequence;
   uint64_t last_initial_oe_start_ns;
   uint64_t target_initial_oe_start_ns;
   SPWM_Panel_Settings panel_settings;
@@ -368,6 +373,13 @@ void spwm_apply_bool_env_override(const char *spwm_env_name,
 void spwm_apply_panel_env_overrides(SPWM_Panel_Settings *spwm_settings) {
   if (spwm_settings == nullptr) return;
 
+  // DP3364-style dual-chain column split and 14-bit word MSB reservation.
+  spwm_apply_bool_env_override("SPWM_UPLOAD_SPLIT_COLUMNS_DUAL_RGB",
+                               &spwm_settings->upload_split_columns_dual_rgb);
+  spwm_apply_int_env_override("SPWM_UPLOAD_WORD_RESERVED_MSB_BITS",
+                              spwm_is_non_negative_env_int,
+                              &spwm_settings->upload_word_reserved_msb_bits);
+
   spwm_apply_bool_env_override("SPWM_AUTO_TUNE_OE_GAPS",
                                &spwm_settings->auto_tune_oe_gaps);
   spwm_apply_int_env_override("SPWM_AUTO_TUNE_FRAMES",
@@ -397,6 +409,12 @@ void spwm_apply_panel_env_overrides(SPWM_Panel_Settings *spwm_settings) {
   spwm_apply_int_env_override("SPWM_OE_CLK_LENGTH",
                               spwm_is_non_negative_env_int,
                               &spwm_settings->oe_clk_length);
+  spwm_apply_int_env_override("SPWM_UPLOAD_CHANNELS_PER_CHIP",
+                              spwm_is_positive_env_int,
+                              &spwm_settings->upload_channels_per_chip);
+  spwm_apply_int_env_override("SPWM_UPLOAD_CHIP_COUNT",
+                              spwm_is_non_negative_env_int,
+                              &spwm_settings->upload_chip_count);
   spwm_apply_int_env_override("SPWM_SHIFT_REG_ROW_SELECT_A_PULSE_CLK_COUNT",
                               spwm_is_non_negative_env_int,
                               &spwm_settings->shiftreg_row_select_a_pulse_clk_count);
@@ -705,6 +723,21 @@ void spwm_send_lat_pulses(GPIO *io, const HardwareMapping &h,
   spwm_set_row_bits(io, h, spwm_row);
 }
 
+// Emit LAT-low idle clocks used by some panel init scripts between register
+// operations.
+void spwm_send_idle_clocks(GPIO *io, const HardwareMapping &h,
+                           int spwm_idle_clocks) {
+  if (spwm_idle_clocks <= 0) return;
+
+  io->ClearBits(h.strobe);
+  for (int spwm_clock_index = 0;
+       spwm_clock_index < spwm_idle_clocks;
+       ++spwm_clock_index) {
+    io->SetBits(h.clock);
+    io->ClearBits(h.clock);
+  }
+}
+
 // Shift one fixed register block into the panel, overlap LAT with the tail data
 // clocks, then emit any extra post-data LAT sections required by the panel.
 // Purpose: Shift one fixed SPWM register block into the panel and latch it.
@@ -831,9 +864,11 @@ void spwm_emit_init_sequence(GPIO *io, const HardwareMapping &h) {
         break;
       case SPWM_INIT_STEP_REGISTER:
         spwm_send_register(io, h, spwm_step.value, spwm_step.row);
+        spwm_send_idle_clocks(io, h, spwm_step.space_clocks);
         break;
       case SPWM_INIT_STEP_RGB_REGISTER:
         spwm_send_rgb_register(io, h, spwm_step.value, spwm_step.row);
+        spwm_send_idle_clocks(io, h, spwm_step.space_clocks);
         break;
       default:
         break;
@@ -1188,8 +1223,8 @@ bool spwm_uses_shiftreg_ab_blank_clock(int spwm_row_address_type) {
 }
 
 // Resolve the A/B/C waveform for one blank-clock phase. Type 1 only emits the
-// A pulse and adds C on the real wrap. Type 2 adds an earlier B pulse and, on
-// wrap, mirrors that wider B pulse onto C.
+// A pulse and adds C on the real wrap. Type 2 adds an earlier B pulse, while
+// C on wrap stays aligned to the A pulse edge.
 gpio_bits_t spwm_resolve_shiftreg_row_bits(const HardwareMapping &h,
                                            int spwm_row_address_type,
                                            int spwm_blank_phase,
@@ -1216,15 +1251,12 @@ gpio_bits_t spwm_resolve_shiftreg_row_bits(const HardwareMapping &h,
         spwm_blank_phase, spwm_b_pulse_start, spwm_a_pulse_end);
     if (spwm_in_b_pulse) {
       spwm_row_bits |= h.b;
-      if (spwm_wrapped_to_row_zero) {
-        spwm_row_bits |= h.c;
-      }
     }
   }
 
   if (spwm_in_a_pulse) {
     spwm_row_bits |= h.a;
-    if (!spwm_type2_transport && spwm_wrapped_to_row_zero) {
+    if (spwm_wrapped_to_row_zero) {
       spwm_row_bits |= h.c;
     }
   }
@@ -1241,7 +1273,7 @@ gpio_bits_t spwm_resolve_shiftreg_row_bits(const HardwareMapping &h,
 //
 // Type 2:
 // Channel B starts one clock earlier than A and ends on the same clock. On the
-// wrap cycle, Channel C mirrors that longer B-width pulse.
+// wrap cycle, Channel C stays aligned to Channel A.
 void spwm_row_shiftreg_drive_blanking(GPIO *io, const HardwareMapping &h,
                                       const SPWM_Scan_Config &spwm_scan_config,
                                       SPWM_Scan_State *spwm_scan_state) {
@@ -1377,6 +1409,7 @@ bool spwm_scan_pre_clock_shiftreg(GPIO *io, const HardwareMapping &h,
   if (spwm_scan_config.row_before_oe) {
     if (spwm_phase == spwm_scan_config.advance_phase) {
       spwm_advance_scan_row(spwm_scan_state, spwm_double_rows);
+      spwm_row_setter->SetRowAddress(io, spwm_scan_state->row);
       spwm_advanced_row = true;
     }
 
@@ -1390,6 +1423,7 @@ bool spwm_scan_pre_clock_shiftreg(GPIO *io, const HardwareMapping &h,
 
     if (spwm_phase == spwm_scan_config.advance_phase) {
       spwm_advance_scan_row(spwm_scan_state, spwm_double_rows);
+      spwm_row_setter->SetRowAddress(io, spwm_scan_state->row);
       spwm_advanced_row = true;
     }
 
@@ -1435,15 +1469,23 @@ SPWM_Pixel_Block_GPIO_Bits spwm_repack_pixel_block_gpio_bits(
     const gpio_bits_t *spwm_pixel_base,
     int spwm_bitplane_stride,
     int spwm_pwm_bits,
-    gpio_bits_t spwm_rgb_mask) {
+    gpio_bits_t spwm_rgb_mask,
+    int spwm_reserved_msb_bits) {
   SPWM_Pixel_Block_GPIO_Bits spwm_block_gpio_bits = {{0}};
   if (spwm_pixel_base == nullptr || spwm_pwm_bits <= 0) {
     return spwm_block_gpio_bits;
   }
 
+  int spwm_reserved = spwm_reserved_msb_bits < 0 ? 0 : spwm_reserved_msb_bits;
+  if (spwm_reserved > SPWM_WORD_BIT_COUNT - 1) {
+    spwm_reserved = SPWM_WORD_BIT_COUNT - 1;
+  }
+  const int spwm_available_bits = SPWM_WORD_BIT_COUNT - spwm_reserved;
   const int spwm_clamped_pwm_bits =
-      spwm_pwm_bits > SPWM_WORD_BIT_COUNT ? SPWM_WORD_BIT_COUNT : spwm_pwm_bits;
-  const int spwm_word_bit_base = SPWM_WORD_BIT_COUNT - spwm_clamped_pwm_bits;
+      spwm_pwm_bits > spwm_available_bits ? spwm_available_bits : spwm_pwm_bits;
+  // Payload stays MSB-aligned but shifted down by the reserved count so the top
+  // `spwm_reserved` word bits remain zero for the driver's data format.
+  const int spwm_word_bit_base = spwm_available_bits - spwm_clamped_pwm_bits;
   for (int spwm_source_bit = 0;
        spwm_source_bit < spwm_clamped_pwm_bits;
        ++spwm_source_bit) {
@@ -1494,9 +1536,10 @@ void spwm_finish_shared_initial_oe_if_ready(
     SPWM_Scan_State *spwm_scan_state);
 
 // Walk the framebuffer in logical-row / channel / chip order and hand each
-// pre-expanded 16-clock word block to the caller. The direct and shift-register
-// upload paths share this traversal and only differ in the per-clock scan/OE
-// scheduling wrapped around each block.
+// pre-expanded 16-clock word block to the caller, latching at the last chip of
+// every channel group. The direct and shift-register upload paths share this
+// traversal and only differ in the per-clock scan/OE scheduling wrapped around
+// each block.
 template <typename SPWM_Block_Emitter>
 void spwm_upload_framebuffer_blocks(
     GPIO *io, const HardwareMapping &h,
@@ -1515,6 +1558,7 @@ void spwm_upload_framebuffer_blocks(
   const SPWM_Pixel_Block_GPIO_Bits spwm_zero_block_gpio_bits = {{0}};
   const SPWM_Panel_Settings &spwm_settings = spwm_get_panel_settings();
   const int spwm_last_chip = spwm_chip_count - 1;
+  const int spwm_reserved_msb = spwm_settings.upload_word_reserved_msb_bits;
   const size_t spwm_row_stride =
       static_cast<size_t>(spwm_framebuffer_view.columns) *
       static_cast<size_t>(spwm_framebuffer_view.stored_bitplanes);
@@ -1523,8 +1567,7 @@ void spwm_upload_framebuffer_blocks(
     const gpio_bits_t *const spwm_row_base =
         spwm_framebuffer_view.bitplane_buffer + spwm_row * spwm_row_stride;
 
-    for (int spwm_channel = 0;
-         spwm_channel < spwm_channels_per_chip;
+    for (int spwm_channel = 0; spwm_channel < spwm_channels_per_chip;
          ++spwm_channel) {
       io->ClearBits(h.clock | h.strobe | spwm_rgb_mask);
 
@@ -1539,7 +1582,7 @@ void spwm_upload_framebuffer_blocks(
                       spwm_row_base + spwm_column,
                       spwm_framebuffer_view.columns,
                       spwm_framebuffer_view.pwm_bits,
-                      spwm_rgb_mask)
+                      spwm_rgb_mask, spwm_reserved_msb)
                 : spwm_zero_block_gpio_bits;
         spwm_emit_block(spwm_block_gpio_bits, spwm_chip == spwm_last_chip);
       }
@@ -1613,18 +1656,20 @@ void spwm_upload_framebuffer_direct(
 // after that blanking window, but unlike the direct path there is no
 // SetRowAddress() call in the hot upload loop.
 void spwm_scan_pre_clock_shiftreg_upload(
-    GPIO *io, const HardwareMapping &h, int spwm_scan_rows,
+    GPIO *io, const HardwareMapping &h, RowAddressSetter *spwm_row_setter,
+    int spwm_scan_rows,
     const SPWM_Scan_Config &spwm_scan_config,
     SPWM_OE_Gate_State *spwm_oe_gate,
     SPWM_Scan_State *spwm_scan_state) {
-  if (io == nullptr || spwm_scan_state == nullptr ||
-      spwm_scan_config.row_clks <= 0) {
+  if (io == nullptr || spwm_row_setter == nullptr ||
+      spwm_scan_state == nullptr || spwm_scan_config.row_clks <= 0) {
     return;
   }
 
   if (spwm_scan_config.row_before_oe) {
     if (spwm_scan_state->phase == spwm_scan_config.advance_phase) {
       spwm_advance_scan_row(spwm_scan_state, spwm_scan_rows);
+      spwm_row_setter->SetRowAddress(io, spwm_scan_state->row);
     }
 
     spwm_row_shiftreg_drive_blanking(io, h, spwm_scan_config,
@@ -1639,6 +1684,7 @@ void spwm_scan_pre_clock_shiftreg_upload(
       spwm_scan_state->phase, spwm_scan_config, spwm_oe_gate, spwm_scan_state);
   if (spwm_scan_state->phase == spwm_scan_config.advance_phase) {
     spwm_advance_scan_row(spwm_scan_state, spwm_scan_rows);
+    spwm_row_setter->SetRowAddress(io, spwm_scan_state->row);
   }
   spwm_row_shiftreg_drive_blanking(io, h, spwm_scan_config, spwm_scan_state);
 }
@@ -1675,6 +1721,7 @@ void spwm_finish_shared_initial_oe_if_ready(
 // timing.
 void spwm_upload_framebuffer_shiftreg(
     GPIO *io, const HardwareMapping &h,
+    RowAddressSetter *spwm_row_setter,
     const SPWM_Framebuffer_View &spwm_framebuffer_view,
     gpio_bits_t spwm_rgb_mask,
     gpio_bits_t spwm_data_mask,
@@ -1687,7 +1734,8 @@ void spwm_upload_framebuffer_shiftreg(
     SPWM_OE_Gate_State *spwm_oe_gate,
     SPWM_Scan_State *spwm_scan_state,
     bool *spwm_initial_oe_pending) {
-  if (io == nullptr || spwm_framebuffer_view.bitplane_buffer == nullptr ||
+  if (io == nullptr || spwm_row_setter == nullptr ||
+      spwm_framebuffer_view.bitplane_buffer == nullptr ||
       spwm_scan_state == nullptr || spwm_initial_oe_pending == nullptr) {
     return;
   }
@@ -1701,8 +1749,8 @@ void spwm_upload_framebuffer_shiftreg(
           const bool spwm_shiftreg_defer_row_scan = *spwm_initial_oe_pending;
           if (!spwm_shiftreg_defer_row_scan) {
             spwm_scan_pre_clock_shiftreg_upload(
-                io, h, spwm_scan_rows, spwm_upload_scan_config,
-                spwm_oe_gate, spwm_scan_state);
+                io, h, spwm_row_setter, spwm_scan_rows,
+                spwm_upload_scan_config, spwm_oe_gate, spwm_scan_state);
           }
 
           const bool spwm_latch = spwm_is_last_chip && spwm_bit == 0;
@@ -1928,6 +1976,88 @@ gpio_bits_t spwm_get_framebuffer_rgb_mask(const HardwareMapping &h) {
   return spwm_rgb_mask;
 }
 
+// Build a column-split dual-RGB scratch buffer for panels whose width is two
+// independent data chains: right-half columns on R1/G1/B1, left-half columns on
+// R2/G2/B2, both clocked in parallel over all `rows` scan lines.
+//
+// The source framebuffer stores logical pixel (x,y) with y in [0,double_rows)
+// on the R1/G1/B1 bits of row y, and y in [double_rows,2*double_rows) on the
+// R2/G2/B2 bits of row (y-double_rows). For scan row r we read the matching
+// stored row/half once, then re-emit the right pixel (col half_cols+j) on the
+// R1/G1/B1 pins and the left pixel (col j) on the R2/G2/B2 pins.
+//
+// Output layout matches the upload walker's expectation: row-major over scan
+// rows, bit-major within a row at stride `half_cols`. Returns the scratch
+// buffer and reports the produced row/column counts. Single parallel chain
+// only (parallel==1); other geometries fall through to the source buffer.
+const gpio_bits_t *spwm_build_column_split_dual_rgb_buffer(
+    const HardwareMapping &h, const SPWM_Framebuffer_View &spwm_source_view,
+    int *spwm_out_total_rows, int *spwm_out_columns) {
+  static std::vector<gpio_bits_t> spwm_scratch;
+  const int spwm_half_rows = spwm_source_view.double_rows;
+  const int spwm_columns = spwm_source_view.columns;
+  const int spwm_planes = spwm_source_view.stored_bitplanes;
+  if (spwm_get_parallel_chains() != 1 || spwm_half_rows <= 0 ||
+      spwm_columns <= 1 || (spwm_columns % 2) != 0 || spwm_planes <= 0 ||
+      spwm_source_view.bitplane_buffer == nullptr) {
+    *spwm_out_total_rows = spwm_half_rows;
+    *spwm_out_columns = spwm_columns;
+    return spwm_source_view.bitplane_buffer;
+  }
+
+  const int spwm_total_rows = spwm_half_rows * 2;
+  const int spwm_half_cols = spwm_columns / 2;
+  const size_t spwm_src_stride =
+      static_cast<size_t>(spwm_columns) * static_cast<size_t>(spwm_planes);
+  const size_t spwm_dst_stride =
+      static_cast<size_t>(spwm_half_cols) * static_cast<size_t>(spwm_planes);
+  spwm_scratch.assign(static_cast<size_t>(spwm_total_rows) * spwm_dst_stride, 0);
+
+  for (int spwm_row = 0; spwm_row < spwm_total_rows; ++spwm_row) {
+    const bool spwm_src_is_top = (spwm_row < spwm_half_rows);
+    const int spwm_src_buf_row =
+        spwm_src_is_top ? spwm_row : (spwm_row - spwm_half_rows);
+    // Color bits live on the R1/G1/B1 pins for top-half storage and the
+    // R2/G2/B2 pins for bottom-half storage.
+    const gpio_bits_t spwm_src_r =
+        spwm_src_is_top ? h.p0_r1 : h.p0_r2;
+    const gpio_bits_t spwm_src_g =
+        spwm_src_is_top ? h.p0_g1 : h.p0_g2;
+    const gpio_bits_t spwm_src_b =
+        spwm_src_is_top ? h.p0_b1 : h.p0_b2;
+    const gpio_bits_t *const spwm_src_row =
+        spwm_source_view.bitplane_buffer +
+        static_cast<size_t>(spwm_src_buf_row) * spwm_src_stride;
+    gpio_bits_t *const spwm_dst_row =
+        spwm_scratch.data() + static_cast<size_t>(spwm_row) * spwm_dst_stride;
+
+    for (int spwm_plane = 0; spwm_plane < spwm_planes; ++spwm_plane) {
+      const gpio_bits_t *const spwm_src_plane =
+          spwm_src_row + static_cast<size_t>(spwm_plane) * spwm_columns;
+      gpio_bits_t *const spwm_dst_plane =
+          spwm_dst_row + static_cast<size_t>(spwm_plane) * spwm_half_cols;
+      for (int spwm_j = 0; spwm_j < spwm_half_cols; ++spwm_j) {
+        const gpio_bits_t spwm_right = spwm_src_plane[spwm_half_cols + spwm_j];
+        const gpio_bits_t spwm_left = spwm_src_plane[spwm_j];
+        gpio_bits_t spwm_out = 0;
+        // Right-half pixel -> R1/G1/B1 pins.
+        if (spwm_right & spwm_src_r) spwm_out |= h.p0_r1;
+        if (spwm_right & spwm_src_g) spwm_out |= h.p0_g1;
+        if (spwm_right & spwm_src_b) spwm_out |= h.p0_b1;
+        // Left-half pixel -> R2/G2/B2 pins.
+        if (spwm_left & spwm_src_r) spwm_out |= h.p0_r2;
+        if (spwm_left & spwm_src_g) spwm_out |= h.p0_g2;
+        if (spwm_left & spwm_src_b) spwm_out |= h.p0_b2;
+        spwm_dst_plane[spwm_j] = spwm_out;
+      }
+    }
+  }
+
+  *spwm_out_total_rows = spwm_total_rows;
+  *spwm_out_columns = spwm_half_cols;
+  return spwm_scratch.data();
+}
+
 // FM6373-style OE advances the row shortly before the next burst, while
 // FM6363-style OE uses the whole non-OE window as setup time. This stays tied
 // to the panel profile even when row transport is overridden.
@@ -2069,6 +2199,37 @@ bool spwm_is_panel_type(const char *spwm_panel_type) {
   return spwm_find_panel_profile(spwm_panel_type) != nullptr;
 }
 
+// Emit the panel's one-time startup sequence. This is called once at
+// initialization time (not per-frame). Use it for chip commands that must be
+// sent after power-on but must not be repeated every frame (e.g. DP3364 SDR).
+void spwm_emit_startup_sequence(GPIO *io, const HardwareMapping &h) {
+  SPWM_Runtime_State &spwm_runtime_state = spwm_get_runtime_state();
+  if (spwm_runtime_state.startup_sequence.steps == nullptr ||
+      spwm_runtime_state.startup_sequence.step_count == 0) {
+    return;
+  }
+  for (size_t spwm_step_index = 0;
+       spwm_step_index < spwm_runtime_state.startup_sequence.step_count;
+       ++spwm_step_index) {
+    const SPWM_Init_Step &spwm_step =
+        spwm_runtime_state.startup_sequence.steps[spwm_step_index];
+    switch (spwm_step.type) {
+      case SPWM_INIT_STEP_LAT_PULSES:
+        spwm_send_lat_pulses(io, h, spwm_step.row, spwm_step.value,
+                             spwm_step.space_clocks);
+        break;
+      case SPWM_INIT_STEP_REGISTER:
+        spwm_send_register(io, h, spwm_step.value, spwm_step.row);
+        break;
+      case SPWM_INIT_STEP_RGB_REGISTER:
+        spwm_send_rgb_register(io, h, spwm_step.value, spwm_step.row);
+        break;
+      default:
+        break;
+    }
+  }
+}
+
 // Select the active SPWM runtime profile and report whether the panel should
 // route framebuffer refresh through the SPWM path.
 bool spwm_initialize_panel_type(const char *spwm_panel_type, int spwm_columns,
@@ -2104,7 +2265,7 @@ void spwm_configure_panel_type(const char *spwm_panel_type, int spwm_columns,
           ? spwm_resolve_profile_settings(*spwm_profile, spwm_columns)
           : spwm_resolve_profile_settings(spwm_default_profile, spwm_columns);
   spwm_runtime_state.row_address_type = spwm_row_address_type;
-  spwm_runtime_state.scan_rows = spwm_scan_rows;
+    spwm_runtime_state.scan_rows = spwm_scan_rows;
 
   spwm_apply_panel_env_overrides(&spwm_runtime_state.panel_settings);
   spwm_auto_tune_control.loaded = false;
@@ -2123,6 +2284,14 @@ void spwm_configure_panel_type(const char *spwm_panel_type, int spwm_columns,
     spwm_runtime_state.init_sequence = spwm_profile->init_sequence;
   } else {
     spwm_runtime_state.init_sequence = spwm_default_profile.init_sequence;
+  }
+
+  if (spwm_profile != nullptr &&
+      spwm_profile->startup_sequence.steps != nullptr &&
+      spwm_profile->startup_sequence.step_count > 0) {
+    spwm_runtime_state.startup_sequence = spwm_profile->startup_sequence;
+  } else {
+    spwm_runtime_state.startup_sequence = {nullptr, 0};
   }
 }
 
@@ -2164,9 +2333,14 @@ SPWM_Upload_Geometry spwm_resolve_upload_geometry(int spwm_rows,
       spwm_resolve_positive_or_fallback(spwm_rows, spwm_settings.default_rows);
   spwm_geometry.columns = spwm_resolve_positive_or_fallback(
       spwm_columns, spwm_settings.default_columns);
+
+  // Upload rows come from the caller's double_rows (the dual-chain split path
+  // passes the full row count here); otherwise fall back to rows/2 for the
+  // standard 1/32 two-half model.
   spwm_geometry.double_rows =
       spwm_double_rows > 0 ? spwm_double_rows
                            : (spwm_geometry.rows > 0 ? spwm_geometry.rows / 2 : 0);
+
   spwm_geometry.channels_per_chip = spwm_resolve_positive_or_fallback(
       spwm_settings.upload_channels_per_chip, 16);
   spwm_geometry.word_bits = spwm_resolve_positive_or_fallback(
@@ -2285,16 +2459,30 @@ void spwm_dump_to_matrix(GPIO *io, const HardwareMapping &h,
     return;
   }
 
-  // Build the masks used throughout the frame upload and resolve the
-  // logical upload geometry for the active panel. For a 128x64 panel this
-  // typically means 32 logical upload rows (top and bottom halves together).
+  // Build the masks used throughout the frame upload and resolve the logical
+  // upload geometry for the active panel. A standard 128x64 panel uses 32
+  // logical upload rows (top and bottom halves together).
+  //
+  // Dual-chain panels (e.g. DP3364S) instead split the width across two data
+  // sets and scan all rows: the upload is rebuilt to drive the right columns on
+  // R1/G1/B1 and the left columns on R2/G2/B2 over 2x upload rows.
+  const SPWM_Panel_Settings &spwm_dump_settings = spwm_get_panel_settings();
+  SPWM_Framebuffer_View spwm_view = spwm_framebuffer_view;
+  if (spwm_dump_settings.upload_split_columns_dual_rgb) {
+    int spwm_split_rows = 0;
+    int spwm_split_cols = 0;
+    spwm_view.bitplane_buffer = spwm_build_column_split_dual_rgb_buffer(
+        h, spwm_framebuffer_view, &spwm_split_rows, &spwm_split_cols);
+    spwm_view.double_rows = spwm_split_rows;
+    spwm_view.columns = spwm_split_cols;
+  }
   const gpio_bits_t spwm_rgb_mask = spwm_get_framebuffer_rgb_mask(h);
   const gpio_bits_t spwm_data_mask = spwm_rgb_mask | h.clock;
 
   const SPWM_Upload_Geometry spwm_upload_geometry =
-      spwm_resolve_upload_geometry(spwm_framebuffer_view.rows,
-                                   spwm_framebuffer_view.columns,
-                                   spwm_framebuffer_view.double_rows);
+      spwm_resolve_upload_geometry(spwm_view.rows,
+                                   spwm_view.columns,
+                                   spwm_view.double_rows);
   const int spwm_chip_count = spwm_upload_geometry.chips;
   const int spwm_channels_per_chip =
       spwm_upload_geometry.channels_per_chip;
@@ -2302,7 +2490,7 @@ void spwm_dump_to_matrix(GPIO *io, const HardwareMapping &h,
   const int spwm_upload_rows =
       spwm_upload_geometry.double_rows > 0
           ? spwm_upload_geometry.double_rows
-          : spwm_framebuffer_view.double_rows;
+          : spwm_view.double_rows;
 
   // Prepare per-frame timing state. The same scan state is reused during
   // the initial OE pulse, RGB upload, and the post-upload display phase.
@@ -2371,15 +2559,15 @@ void spwm_dump_to_matrix(GPIO *io, const HardwareMapping &h,
   // count beyond upload rows for panels such as 1/43-scan ICND1065L modules.
   if (!spwm_blank_clock_row_transport) {
     spwm_upload_framebuffer_direct(
-        io, h, spwm_row_setter, spwm_framebuffer_view, spwm_rgb_mask,
+        io, h, spwm_row_setter, spwm_view, spwm_rgb_mask,
         spwm_data_mask, spwm_upload_rows, spwm_chip_count,
         spwm_channels_per_chip, spwm_word_bits, spwm_upload_scan_config,
         &spwm_oe_gate, &spwm_scan_state, &spwm_initial_oe_pending);
   } else {
     spwm_upload_framebuffer_shiftreg(
-        io, h, spwm_framebuffer_view, spwm_rgb_mask, spwm_data_mask,
-        spwm_upload_rows, spwm_effective_scan_rows, spwm_chip_count,
-        spwm_channels_per_chip,
+        io, h, spwm_row_setter, spwm_view, spwm_rgb_mask,
+        spwm_data_mask, spwm_upload_rows, spwm_effective_scan_rows,
+        spwm_chip_count, spwm_channels_per_chip,
         spwm_word_bits, spwm_upload_scan_config,
         &spwm_oe_gate, &spwm_scan_state, &spwm_initial_oe_pending);
   }

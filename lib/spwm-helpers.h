@@ -54,23 +54,39 @@ struct SPWM_Panel_Settings {
   int oe_clk_length;              // SPWM_OE_CLK_LENGTH
   int oe_clk_look_behind;         // SPWM_OE_CLK_LOOK_BEHIND
   SPWM_OE_Style oe_style;         // Panel-tied OE timing profile.
-  
+
   bool auto_tune_oe_gaps;         // SPWM_AUTO_TUNE_OE_GAPS
   int auto_tune_frames;           // SPWM_AUTO_TUNE_FRAMES
   int auto_tune_max_step_clks;    // SPWM_AUTO_TUNE_MAX_STEP_CLKS
-  
-  
-  
+
+
+
   int oe_during_upload_clk_count; // SPWM_OE_DURING_UPLOAD_CLK_COUNT
   int oe_after_upload_clk_count;  // SPWM_OE_AFTER_UPLOAD_CLK_COUNT
-  
-  
+
+
   // Shift-register blank-clock row-select Channel A pulse controls.
   // These defaults are attached to the blank-clock row-select transports and
   // can still be overridden through the environment.
   int shiftreg_row_select_a_pulse_clk_count;  // SPWM_SHIFT_REG_ROW_SELECT_A_PULSE_CLK_COUNT
   bool shiftreg_row_select_a_pulse_centered;  // SPWM_SHIFT_REG_ROW_SELECT_A_PULSE_CENTERED
   int shiftreg_row_select_a_pulse_start_clk;  // SPWM_SHIFT_REG_ROW_SELECT_A_PULSE_START_CLK
+
+  // When true, the panel's width is split across two independent data chains:
+  // the right half of the columns is driven on R1/G1/B1 and the left half on
+  // R2/G2/B2 (both clocked in parallel), and all `rows` lines are scanned
+  // sequentially. This models DP3364S-style 128x64 boards built from two
+  // 64-wide column chains rather than the standard top/bottom two-half HUB75
+  // layout. The upload emits columns/2 words per row over `rows` scan lines and
+  // drives both RGB data sets.
+  bool upload_split_columns_dual_rgb;
+
+  // Number of most-significant bits to leave empty (zero) in each shifted 16-bit
+  // grayscale word. Some PWM drivers (e.g. DP3364S, 14-bit grayscale) require
+  // the top 2-4 MSBs of the 16-bit data word to stay 0; writing payload bits
+  // there overflows the internal counter and corrupts color at high values.
+  // The bitplane payload is shifted down by this many positions. Default 0.
+  int upload_word_reserved_msb_bits;
 
   // Some panels expose fewer visible columns than the physical shift chain.
   // These positions are physical clock slots that should stay blank during RGB
@@ -236,6 +252,11 @@ struct SPWM_Framebuffer_View {
   int pwm_bits;
   int stored_bitplanes;
 };
+
+// Emit the panel's one-time startup sequence (e.g. chip-mode commands that
+// must be sent once after power-on). Safe to call when no startup sequence
+// is configured.
+void spwm_emit_startup_sequence(GPIO *io, const HardwareMapping &h);
 
 // Emit one full SPWM frame using the already prepared framebuffer bitplanes.
 void spwm_dump_to_matrix(GPIO *io, const HardwareMapping &h,

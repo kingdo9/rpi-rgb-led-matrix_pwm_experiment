@@ -40,6 +40,7 @@ struct SPWM_Panel_Profile {
   SPWM_Panel_Settings settings;   // Default geometry and timing for the panel.
   SPWM_Config_Factory create_config;  // Builds the register payload set.
   SPWM_Init_Sequence init_sequence;  // Startup script emitted each frame.
+  SPWM_Init_Sequence startup_sequence;  // One-time script emitted at startup.
 };
 
 // Return the built-in fallback SPWM panel profile.

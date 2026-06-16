@@ -203,20 +203,49 @@ private:
 // changes.
 class SPWMBlankClockRowSelectSetter : public RowAddressSetter {
  public:
-  explicit SPWMBlankClockRowSelectSetter(const HardwareMapping &h)
-      : row_mask_(h.a | h.b | h.c), last_row_(-1) {}
+  SPWMBlankClockRowSelectSetter(int double_rows, const HardwareMapping &h)
+      : shiftreg_row_mask_(h.a | h.b | h.c),
+        row_mask_(shiftreg_row_mask_),
+        de_row_mask_(0),
+        last_row_(-1) {
+    assert(double_rows <= 32);
+    if (double_rows > 8) {
+      de_row_mask_ |= h.d;
+    }
+    if (double_rows > 16) {
+      de_row_mask_ |= h.e;
+    }
+    row_mask_ |= de_row_mask_;
+
+    for (int i = 0; i < 32; ++i) {
+      gpio_bits_t de_row_bits = 0;
+      if (de_row_mask_ & h.d) {
+        de_row_bits |= (i & 0x08) ? h.d : 0;
+      }
+      if (de_row_mask_ & h.e) {
+        de_row_bits |= (i & 0x10) ? h.e : 0;
+      }
+      de_row_lookup_[i] = de_row_bits;
+    }
+  }
 
   virtual gpio_bits_t need_bits() const { return row_mask_; }
   virtual bool spwm_uses_blank_clock_row_select() const { return true; }
 
   virtual void SetRowAddress(GPIO *io, int row) {
     if (row == last_row_) return;
-    io->ClearBits(row_mask_);
+    io->ClearBits(shiftreg_row_mask_);
+    if (de_row_mask_ != 0) {
+      io->WriteMaskedBits(de_row_lookup_[row & 0x1f], de_row_mask_);
+    }
     last_row_ = row;
   }
 
  private:
-  const gpio_bits_t row_mask_;
+  const gpio_bits_t shiftreg_row_mask_;
+  gpio_bits_t row_mask_;
+  gpio_bits_t de_row_mask_;
+  gpio_bits_t de_row_lookup_[32];
   int last_row_;
 };
 
@@ -340,7 +369,7 @@ RowAddressSetter *CreateSpwmRowTransportSetter(int double_rows,
       return new DirectRowAddressSetter(double_rows, h);
     case SPWM_ROW_ADDRESS_TYPE_1_SHIFTREG_BLANK_CLOCK:
     case SPWM_ROW_ADDRESS_TYPE_2_SHIFTREG_AB_BLANK_CLOCK:
-      return new SPWMBlankClockRowSelectSetter(h);
+      return new SPWMBlankClockRowSelectSetter(double_rows, h);
     default:
       return NULL;
   }
@@ -402,6 +431,8 @@ Framebuffer::Framebuffer(int rows, int columns, int parallel,
   assert(parallel >= 1 && parallel <= 6);
 
   bitplane_buffer_ = new gpio_bits_t[double_rows_ * columns_ * kBitPlanes];
+  spwm_snapshot_buffer_ =
+      new gpio_bits_t[double_rows_ * columns_ * kBitPlanes];
 
   // If we're the first Framebuffer created, the shared PixelMapper is
   // still NULL, so create one.
@@ -436,6 +467,7 @@ Framebuffer::Framebuffer(int rows, int columns, int parallel,
 
 Framebuffer::~Framebuffer() {
   delete [] bitplane_buffer_;
+  delete [] spwm_snapshot_buffer_;
 }
 
 // TODO: this should also be parsed from some special formatted string, e.g.
@@ -650,6 +682,9 @@ static void InitFM6127(GPIO *io, const struct HardwareMapping &h, int columns) {
       spwm_initialize_panel_type(panel_type, columns,
                                  spwm_row_address_type,
                                  spwm_scan_rows);
+  if (spwm_panel_handled && io != nullptr) {
+    spwm_emit_startup_sequence(io, *hardware_mapping_);
+  }
 
   if (!panel_type || panel_type[0] == '\0') return;
 
@@ -657,8 +692,8 @@ static void InitFM6127(GPIO *io, const struct HardwareMapping &h, int columns) {
     InitFM6126(io, *hardware_mapping_, columns);
   } else if (strncasecmp(panel_type, "fm6127", 6) == 0) {
     InitFM6127(io, *hardware_mapping_, columns);
-      
-  } 
+
+  }
   // else if (strncasecmp(...))  // more init types
   else if (!spwm_panel_handled) {
     fprintf(stderr, "Unknown panel type '%s'; typo ?\n", panel_type);
@@ -994,7 +1029,7 @@ void Framebuffer::DumpToMatrix(GPIO *io, int pwm_low_bit) {
     DumpToMatrixSPWM(io);
     return;
   }
-  
+
 
   // Depending if we do dithering, we might not always show the lowest bits.
   const int start_bit = std::max(pwm_low_bit, kBitPlanes - pwm_bits_);
@@ -1043,8 +1078,15 @@ void Framebuffer::DumpToMatrix(GPIO *io, int pwm_low_bit) {
 }
 
 void Framebuffer::DumpToMatrixSPWM(GPIO *io) {
+  // Snapshot the live bitplane buffer once per frame. Demos that draw via
+  // SetPixel into RGBMatrix::canvas() without SwapOnVSync would otherwise
+  // race the slow SPWM upload, producing visible tearing or corruption
+  // because R1/G1/B1 bytes and R2/G2/B2 bytes get sampled at different
+  // wall-clock points within a single upload pass.
+  memcpy(spwm_snapshot_buffer_, bitplane_buffer_,
+         sizeof(*bitplane_buffer_) * double_rows_ * columns_ * kBitPlanes);
   const SPWM_Framebuffer_View spwm_framebuffer_view = {
-      bitplane_buffer_,
+      spwm_snapshot_buffer_,
       rows_,
       columns_,
       double_rows_,

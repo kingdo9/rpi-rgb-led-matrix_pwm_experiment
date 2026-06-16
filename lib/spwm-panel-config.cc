@@ -1,6 +1,9 @@
 // -*- mode: c++; c-basic-offset: 2; indent-tabs-mode: nil; -*-
 #include "spwm-panel-config.h"
 
+#include <errno.h>
+#include <limits.h>
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 
@@ -19,6 +22,27 @@ bool spwm_panel_type_matches(const char *spwm_panel_type,
 
   return strncasecmp(spwm_panel_type, spwm_expected_panel_type,
                      strlen(spwm_expected_panel_type)) == 0;
+}
+
+// Parse an integer environment variable. Returns true on a clean parse.
+bool spwm_parse_env_int(const char *spwm_env_name, int *spwm_value) {
+  if (spwm_env_name == nullptr || spwm_value == nullptr) return false;
+
+  const char *spwm_env_value = getenv(spwm_env_name);
+  if (spwm_env_value == nullptr || *spwm_env_value == '\0') return false;
+
+  errno = 0;
+  char *spwm_end = nullptr;
+  const long spwm_parsed_value = strtol(spwm_env_value, &spwm_end, 10);
+  if (errno != 0 || spwm_end == spwm_env_value || *spwm_end != '\0') {
+    return false;
+  }
+  if (spwm_parsed_value < INT_MIN || spwm_parsed_value > INT_MAX) {
+    return false;
+  }
+
+  *spwm_value = static_cast<int>(spwm_parsed_value);
+  return true;
 }
 
 // Copy a compile-time register payload array into a vector for runtime
@@ -388,7 +412,7 @@ static const SPWM_Register_Timing SPWM_SM16380SH_REGISTER_TIMINGS[] = {
 
 static const SPWM_Panel_Settings SPWM_SM16380SH_SETTINGS = []() {
   SPWM_Panel_Settings spwm_settings = spwm_make_default_panel_settings();
-  spwm_settings.first_oe_clk_length = 10;  
+  spwm_settings.first_oe_clk_length = 10;
   spwm_settings.oe_clk_look_behind = 16;
   return spwm_settings;
 }();
@@ -563,6 +587,227 @@ SPWM_Config spwm_create_fm6363_config(const SPWM_Panel_Settings &spwm_settings,
   return spwm_config;
 }
 
+// -------------------------------------------------------------------------------------------------
+// FM6353 profile definition.
+// FM6353 shares the FM6373-style OE schedule (DMD_STM32 derives it from
+// DMD_RGB_SPWM_DRIVER, not the FM6363 base). Distinguishing features vs
+// FM6373/FM6363: 138 GCLK pulses per row, 5 fixed config registers, and a
+// per-register 14-clock LAT preamble during init.
+// -------------------------------------------------------------------------------------------------
+
+static const size_t SPWM_FM6353_REGISTER_COUNT = 5;
+static const uint8_t SPWM_FM6353_REGISTER_SEND_LAT[][1] = {
+    {14},
+    {14},
+    {14},
+    {14},
+    {14},
+};
+static const SPWM_Register_Timing SPWM_FM6353_REGISTER_TIMINGS[] = {
+    spwm_make_register_timing(SPWM_FM6353_REGISTER_SEND_LAT[0]),
+    spwm_make_register_timing(SPWM_FM6353_REGISTER_SEND_LAT[1]),
+    spwm_make_register_timing(SPWM_FM6353_REGISTER_SEND_LAT[2]),
+    spwm_make_register_timing(SPWM_FM6353_REGISTER_SEND_LAT[3]),
+    spwm_make_register_timing(SPWM_FM6353_REGISTER_SEND_LAT[4]),
+};
+
+static const SPWM_Panel_Settings SPWM_FM6353_SETTINGS = []() {
+  // FM6353's internal row counter advances on GCLK *edges*, not on a held
+  // OE level. That means the chip needs OE pulsed once per CLK during the
+  // OE window (FM6363 style: pulse_each_clock = true), not asserted high
+  // across the whole burst (FM6373 style). Width of that pulse train must
+  // match the GCLK_NUM that DMD_STM32 documents for this chip: 138 pulses
+  // per row.
+  SPWM_Panel_Settings spwm_settings = spwm_make_default_panel_settings();
+  spwm_settings.auto_tune_oe_gaps = false;
+  spwm_settings.auto_tune_frames = 0;
+  spwm_settings.auto_tune_max_step_clks = 0;
+  spwm_settings.first_oe_clk_length = 78;
+  spwm_settings.end_of_frame_extra_row_cycles = 10;
+  spwm_settings.frame_end_sleep_us = 100;
+  spwm_settings.oe_during_upload_clk_count = 212;
+  spwm_settings.oe_after_upload_clk_count = 212;
+  spwm_settings.oe_clk_look_behind = 0;
+  spwm_settings.oe_clk_length = 138;
+  spwm_settings.oe_style = SPWM_OE_STYLE_FM6363;
+  return spwm_settings;
+}();
+
+// DMD_STM32: conf_6353[] = {0x0008, 0x1f70, 0x6707, 0x40f7, 0x0040}; reg 2 is
+// patched at runtime as ((nRows-1) << 8) | (0x1f70 & 0xFF). Baked in for the
+// 1/32 scan case (nRows = 32) like the FM6363 profile does for its own panel.
+static const uint16_t SPWM_FM6353_REGISTER1_WORD = 0x0008;
+static const uint16_t SPWM_FM6353_REGISTER2_WORD = 0x1f70;
+static const uint16_t SPWM_FM6353_REGISTER3_WORD = 0x6707;
+static const uint16_t SPWM_FM6353_REGISTER4_WORD = 0x40f7;
+static const uint16_t SPWM_FM6353_REGISTER5_WORD = 0x0040;
+
+// DMD_STM32 load_config_regs() emits 14-clock pre-active, 12-clock enable, and
+// 3-clock vsync LAT bursts before streaming the five fixed control registers.
+// Each register write is preceded by another 14-clock LAT preamble, expressed
+// here as the per-register LAT timing.
+static const SPWM_Init_Step SPWM_FM6353_INIT_STEPS[] = {
+    {SPWM_INIT_STEP_LAT_PULSES, 14, 0, 0},  // pre-active
+    {SPWM_INIT_STEP_LAT_PULSES, 12, 0, 0},  // enable all output
+    {SPWM_INIT_STEP_LAT_PULSES,  3, 0, 0},  // vsync
+    {SPWM_INIT_STEP_REGISTER,    1, 0, 0},
+    {SPWM_INIT_STEP_REGISTER,    2, 0, 0},
+    {SPWM_INIT_STEP_REGISTER,    3, 0, 0},
+    {SPWM_INIT_STEP_REGISTER,    4, 0, 0},
+    {SPWM_INIT_STEP_REGISTER,    5, 0, 0},
+};
+
+static const SPWM_Init_Sequence SPWM_FM6353_INIT_SEQUENCE =
+    spwm_make_init_sequence(SPWM_FM6353_INIT_STEPS);
+
+// Purpose: Build the FM6353 register layout for the active panel width.
+// Inputs: Panel timing/settings and the resolved column count.
+// Outputs: A runtime register bundle with the five fixed FM6353 control words.
+// Side effects: None.
+SPWM_Config spwm_create_fm6353_config(const SPWM_Panel_Settings &spwm_settings,
+                                      int spwm_columns) {
+  SPWM_Config spwm_config(SPWM_FM6353_REGISTER_COUNT,
+                          SPWM_FM6353_REGISTER_TIMINGS[0],
+                          spwm_resolve_register_repeat_count(spwm_settings,
+                                                             spwm_columns));
+
+  spwm_config.spwm_add_register(1, {SPWM_FM6353_REGISTER1_WORD},
+                                &SPWM_FM6353_REGISTER_TIMINGS[0]);
+  spwm_config.spwm_add_register(2, {SPWM_FM6353_REGISTER2_WORD},
+                                &SPWM_FM6353_REGISTER_TIMINGS[1]);
+  spwm_config.spwm_add_register(3, {SPWM_FM6353_REGISTER3_WORD},
+                                &SPWM_FM6353_REGISTER_TIMINGS[2]);
+  spwm_config.spwm_add_register(4, {SPWM_FM6353_REGISTER4_WORD},
+                                &SPWM_FM6353_REGISTER_TIMINGS[3]);
+  spwm_config.spwm_add_register(5, {SPWM_FM6353_REGISTER5_WORD},
+                                &SPWM_FM6353_REGISTER_TIMINGS[4]);
+
+  return spwm_config;
+}
+
+// -------------------------------------------------------------------------------------------------
+// DP3364 profile definition.
+//
+// The DP3364 (DP3264 family) uses the FM6373-style OE schedule (one short OE
+// pulse every 128 CLKs during upload, row switch 16 CLKs before OE). The per-
+// frame register upload protocol differs from FM6373: each frame sends ONE
+// config register from a 13-entry cycling sequence with the per-register
+// preamble: vsync (3 LAT + 16 spacer CLKs) + pre-active (14 LAT + 8 spacer
+// CLKs) + register (5 LAT). All RGB lines receive the same word (no separate
+// R/G/B calibration tables for this chip). This matches the DMD_STM32
+// DMD_RGB_DP3264 load_config_regs() observed behavior.
+// -------------------------------------------------------------------------------------------------
+
+static const size_t SPWM_DP3364_REGISTER_COUNT = 1;
+static const uint8_t SPWM_DP3364_REGISTER_SEND_LAT[][1] = {
+    {5},
+};
+static const SPWM_Register_Timing SPWM_DP3364_REGISTER_TIMINGS[] = {
+    spwm_make_register_timing(SPWM_DP3364_REGISTER_SEND_LAT[0]),
+};
+
+static const SPWM_Panel_Settings SPWM_DP3364_SETTINGS = []() {
+  SPWM_Panel_Settings spwm_settings = spwm_make_default_panel_settings();
+  spwm_settings.auto_tune_oe_gaps = false;
+  spwm_settings.auto_tune_frames = 0;
+  spwm_settings.auto_tune_max_step_clks = 0;
+  spwm_settings.first_oe_clk_length = 12;
+  spwm_settings.end_of_frame_extra_row_cycles = 10;
+  spwm_settings.frame_end_sleep_us = 100;
+  // Match the DP3264 timing model used by DMD_STM32:
+  // during upload, row switching is synchronized by short OE pulses every
+  // 128 clocks (12 clocks only for the initial start pulse).
+  spwm_settings.oe_during_upload_clk_count = 128;
+  spwm_settings.oe_after_upload_clk_count = 128;
+  spwm_settings.oe_clk_look_behind = 16;
+  spwm_settings.oe_clk_length = 4;
+  spwm_settings.oe_style = SPWM_OE_STYLE_FM6373;
+  // The DP3364S 128x64 board scans all 64 lines and splits its width across two
+  // data chains: the right 64 columns on R1/G1/B1 and the left 64 on R2/G2/B2,
+  // both clocked in parallel. Drive both sets with a left/right column split
+  // rather than the standard top/bottom two-half model.
+  spwm_settings.upload_split_columns_dual_rgb = true;
+  // DP3364S uses a 14-bit grayscale word; the top MSBs of the shifted 16-bit
+  // word must stay zero or the internal counter overflows and color corrupts at
+  // high values. Reserving 4 MSBs gives clean full-brightness color (verified
+  // on hardware; 3 also works). Override with SPWM_UPLOAD_WORD_RESERVED_MSB_BITS.
+  spwm_settings.upload_word_reserved_msb_bits = 4;
+  return spwm_settings;
+}();
+
+// DP3264-family 13-register config sequence. Register index 2 (offset 1)
+// encodes the scan setting: low byte = nRows-1. Default is 0x1f for 1/32 scan
+// (nRows=32, suitable for 64-row panels). spwm_create_dp3364_config() patches
+// this at runtime from spwm_settings.default_rows/2 to match the actual panel.
+// All three R/G/B channels broadcast the same word (no per-channel calibration
+// at this level — unlike FM6373).
+static const uint16_t SPWM_DP3364_CONFIG_SEQ[] = {
+    0x1100, 0x021f, 0x033f, 0x043f, 0x0504, 0x0642, 0x0700,
+    0x08bf, 0x0960, 0x0abe, 0x0b8b, 0x0c88, 0x0d12,
+};
+
+// Per-frame preamble follows DMD_STM32 DMD_RGB_DP3264::load_config_regs():
+//   send_vsync()     → 3-LAT pulse + 16 spacer CLKs
+//   send_latches(14) → 14-LAT pulse + 8 spacer CLKs
+//   send_to_allRGB(conf_reg[r], 5) → handled by SPWM_INIT_STEP_RGB_REGISTER
+//
+// One-time startup: DP3364S powers up in double-edge clock mode and must be
+// told to enter single-edge mode (SDR command = LE held high for 15 DCLK)
+// per DP3364S datasheet §10.1/§10.3. This is sent once at init time; sending
+// it every frame resets chip state and causes a black display.
+static const SPWM_Init_Step SPWM_DP3364_STARTUP_STEPS[] = {
+    {SPWM_INIT_STEP_LAT_PULSES, 15, 0, 8},  // SDR: enter single-edge mode
+};
+static const SPWM_Init_Sequence SPWM_DP3364_STARTUP_SEQUENCE =
+    spwm_make_init_sequence(SPWM_DP3364_STARTUP_STEPS);
+
+// Per-frame preamble follows DMD_STM32 DMD_RGB_DP3264::load_config_regs().
+static const SPWM_Init_Step SPWM_DP3364_INIT_STEPS[] = {
+    {SPWM_INIT_STEP_LAT_PULSES, 3, 0, 16},  // vsync + 16 spacer CLKs
+    {SPWM_INIT_STEP_LAT_PULSES, 14, 0, 8},  // pre-active + 8 spacer CLKs
+    {SPWM_INIT_STEP_RGB_REGISTER, 1, 0, 8}, // one cycling config register (5 LAT) + 8 spacer CLKs
+};
+
+static const SPWM_Init_Sequence SPWM_DP3364_INIT_SEQUENCE =
+    spwm_make_init_sequence(SPWM_DP3364_INIT_STEPS);
+
+SPWM_Config spwm_create_dp3364_config(const SPWM_Panel_Settings &spwm_settings,
+                                      int spwm_columns) {
+  SPWM_Config spwm_config(SPWM_DP3364_REGISTER_COUNT,
+                          SPWM_DP3364_REGISTER_TIMINGS[0],
+                          spwm_resolve_register_repeat_count(spwm_settings,
+                                                             spwm_columns));
+
+  // Build the config sequence and patch register 2 with the actual scan rows,
+  // mirroring the DMD_STM32 reference: conf_3264[1] = 0x0200 | (nRows - 1).
+  // Default to half-rows (nRows = rows/2) and allow a runtime override for
+  // panel variants that require different scan-group encoding.
+  std::vector<uint16_t> config_seq = spwm_make_words(SPWM_DP3364_CONFIG_SEQ);
+  if (spwm_settings.default_rows > 0 && config_seq.size() > 1) {
+    // The dual-chain split scans every physical line (nRows = rows); the legacy
+    // two-half model scans rows/2. The chip's scan-count register must match how
+    // many lines we actually stream.
+    int nRows = spwm_settings.upload_split_columns_dual_rgb
+                    ? std::max(1, spwm_settings.default_rows)
+                    : std::max(1, spwm_settings.default_rows / 2);
+    int nRows_override = 0;
+    if (spwm_parse_env_int("SPWM_DP3364_CONFIG_NROWS", &nRows_override) &&
+        nRows_override > 0) {
+      nRows = nRows_override;
+    }
+    config_seq[1] = static_cast<uint16_t>(0x0200 | (nRows - 1));
+  }
+
+  // Register slot 1: rotating config sequence, R=G=B (broadcast to all
+  // channels simultaneously, matching send_to_allRGB in the reference).
+  spwm_config.spwm_add_rgb_register(
+      1,
+      {config_seq, config_seq, config_seq},
+      SPWM_DP3364_REGISTER_TIMINGS[0]);
+
+  return spwm_config;
+}
+
 // This table describes panel-tied behavior only: init sequence, register
 // payloads, default OE timing, and panel geometry defaults. The runtime row
 // transport still comes from --led-spwm-row-addr-type, so a profile such as
@@ -572,19 +817,39 @@ static const SPWM_Panel_Profile SPWM_PANEL_PROFILES[] = {
     {"fm6373",
      SPWM_FM6373_SETTINGS,
      spwm_create_fm6373_config,
-     SPWM_FM6373_INIT_SEQUENCE},
+     SPWM_FM6373_INIT_SEQUENCE,
+     {nullptr, 0}},
     {"icnd1065l",
      SPWM_ICND1065L_SETTINGS,
      spwm_create_icnd1065l_config,
-     SPWM_ICND1065L_INIT_SEQUENCE},
+     SPWM_ICND1065L_INIT_SEQUENCE,
+     {nullptr, 0}},
     {"sm16380sh",
      SPWM_SM16380SH_SETTINGS,
      spwm_create_sm16380sh_config,
-     SPWM_SM16380SH_INIT_SEQUENCE},
+     SPWM_SM16380SH_INIT_SEQUENCE,
+     {nullptr, 0}},
     {"fm6363",
      SPWM_FM6363_SETTINGS,
      spwm_create_fm6363_config,
-     SPWM_FM6363_INIT_SEQUENCE},
+     SPWM_FM6363_INIT_SEQUENCE,
+     {nullptr, 0}},
+    {"fm6353",
+     SPWM_FM6353_SETTINGS,
+     spwm_create_fm6353_config,
+     SPWM_FM6353_INIT_SEQUENCE,
+     {nullptr, 0}},
+    {"dp3364",
+     SPWM_DP3364_SETTINGS,
+     spwm_create_dp3364_config,
+     SPWM_DP3364_INIT_SEQUENCE,
+     SPWM_DP3364_STARTUP_SEQUENCE},
+    // DP3264 uses the same config-register protocol and timing model.
+    {"dp3264",
+     SPWM_DP3364_SETTINGS,
+     spwm_create_dp3364_config,
+     SPWM_DP3364_INIT_SEQUENCE,
+     SPWM_DP3364_STARTUP_SEQUENCE},
 };
 
 }  // namespace
