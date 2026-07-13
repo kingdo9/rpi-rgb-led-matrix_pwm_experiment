@@ -8,6 +8,10 @@ SPWM panels currently supported by this tree:
   `--led-panel-type=fm6373 --led-spwm-row-addr-type=0`
 <br>
 
+- FM6373 + DP32020B 64S - shift-register row selection - alternate register config: \
+  `--led-panel-type=fm6373 --led-spwm-row-addr-type=1 --led-spwm-scan=64 --led-spwm-register-config=1`
+<br>
+
 - FM6353: \
   `--led-panel-type=fm6353 --led-spwm-row-addr-type=1`
 <br>
@@ -31,7 +35,7 @@ Shared SPWM flags:
 
 - `--led-spwm-row-addr-type=<0..2>` selects the SPWM row-address transport.
 - `--led-spwm-register-config=<0..1>` selects the SPWM register payload variant where applicable, example SM16380SH test both if any display glitches occur.
-- `--led-spwm-scan=<rows>` overrides the SPWM scan-row count e.g values such as `43` for 1/43. Tested only with ICND1065L
+- `--led-spwm-scan=<rows>` overrides the SPWM scan-row count e.g values such as `43` for 1/43. When set to the full panel height on blank-clock SPWM panels, it also splits the normal double-row framebuffer into one upload row per physical row for 64S-style modules.
 
 [SPWM Tuning Guide](./spwm.md)
 

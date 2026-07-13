@@ -256,6 +256,44 @@ static const SPWM_RGB_Word_Sequences
     spwm_make_word_sequence(SPWM_FM6373_REGISTER_CONFIG0_BLOCK3_SEQ_B),
 };
 
+// Config 1 starts from the MRV412/Nova 64S FM6373+DP32020B capture from a
+// 128x64 P2.5HE64AV2B module. The 64S scan/subfield/tail values are kept from
+// that capture, while selected color/analog balance slots stay at config 0
+// values to test the blue-tint behavior seen with the raw capture payload.
+static const uint16_t SPWM_FM6373_REGISTER_CONFIG1_BLOCK3_SEQ_R[] = {
+    0x0000, 0x0100, 0x023f, 0x033f, 0x0402, 0x0508, 0x0602, 0x0710,
+    0x0810, 0x0900, 0x0a00, 0x0b00, 0x0c01, 0x0d03, 0x0e02, 0x0f11,
+    0x10c2, 0x1121, 0x1201, 0x1300, 0x1400, 0x1500, 0x1600, 0x17f0,
+    0x181f, 0x1900, 0x1a1f, 0x1b10, 0x1cbe, 0x1d0e, 0x1e42, 0x1f24,
+    0x2008, 0x2101, 0x221c, 0x5400, 0x5400, 0x5400, 0x5400, 0x5400,
+    0x5403, 0x5403, 0x5403, 0x5403, 0x5403, 0x5403, 0x2300,
+};
+
+static const uint16_t SPWM_FM6373_REGISTER_CONFIG1_BLOCK3_SEQ_G[] = {
+    0x0000, 0x0100, 0x023f, 0x033f, 0x0402, 0x0508, 0x0602, 0x0710,
+    0x0810, 0x0900, 0x0a00, 0x0b00, 0x0c08, 0x0d03, 0x0e04, 0x0f11,
+    0x10c2, 0x1121, 0x1201, 0x1300, 0x1400, 0x1500, 0x1600, 0x17f0,
+    0x181f, 0x1950, 0x1a1f, 0x1b10, 0x1cbe, 0x1d0e, 0x1e46, 0x1f20,
+    0x2008, 0x2101, 0x221c, 0x5400, 0x5400, 0x5400, 0x5400, 0x5400,
+    0x5403, 0x5403, 0x5403, 0x5403, 0x5403, 0x5403, 0x2300,
+};
+
+static const uint16_t SPWM_FM6373_REGISTER_CONFIG1_BLOCK3_SEQ_B[] = {
+    0x0000, 0x0100, 0x023f, 0x033f, 0x0402, 0x0508, 0x0602, 0x0710,
+    0x0810, 0x0900, 0x0a00, 0x0b00, 0x0c08, 0x0d01, 0x0e04, 0x0f11,
+    0x10c2, 0x1121, 0x1201, 0x1300, 0x1400, 0x1500, 0x1600, 0x17f0,
+    0x182f, 0x1900, 0x1a1f, 0x1b10, 0x1cbe, 0x1d0e, 0x1e48, 0x1f20,
+    0x2010, 0x2101, 0x221c, 0x5400, 0x5400, 0x5400, 0x5400, 0x5400,
+    0x5403, 0x5403, 0x5403, 0x5403, 0x5403, 0x5403, 0x2300,
+};
+
+static const SPWM_RGB_Word_Sequences
+    SPWM_FM6373_REGISTER_CONFIG1_BLOCK3_SEQUENCES = {
+    spwm_make_word_sequence(SPWM_FM6373_REGISTER_CONFIG1_BLOCK3_SEQ_R),
+    spwm_make_word_sequence(SPWM_FM6373_REGISTER_CONFIG1_BLOCK3_SEQ_G),
+    spwm_make_word_sequence(SPWM_FM6373_REGISTER_CONFIG1_BLOCK3_SEQ_B),
+};
+
 static const SPWM_Register_Config_Entry
     SPWM_FM6373_REGISTER_CONFIG0_ENTRIES[] = {
     spwm_make_fixed_register_config_entry(1, 0x00AA),
@@ -266,8 +304,19 @@ static const SPWM_Register_Config_Entry
     spwm_make_fixed_register_config_entry(5, 0x0155),
 };
 
+static const SPWM_Register_Config_Entry
+    SPWM_FM6373_REGISTER_CONFIG1_ENTRIES[] = {
+    spwm_make_fixed_register_config_entry(1, 0x00AA),
+    spwm_make_fixed_register_config_entry(2, 0x01AA),
+    spwm_make_rgb_register_config_entry(
+        3, SPWM_FM6373_REGISTER_CONFIG1_BLOCK3_SEQUENCES),
+    spwm_make_fixed_register_config_entry(4, 0x0055),
+    spwm_make_fixed_register_config_entry(5, 0x0155),
+};
+
 static const SPWM_Register_Config SPWM_FM6373_REGISTER_CONFIGS[] = {
     {0, spwm_make_register_config_entries(SPWM_FM6373_REGISTER_CONFIG0_ENTRIES)},
+    {1, spwm_make_register_config_entries(SPWM_FM6373_REGISTER_CONFIG1_ENTRIES)},
 };
 
 // -------------------------------------------------------------------------------------------------
