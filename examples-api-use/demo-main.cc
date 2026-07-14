@@ -277,6 +277,24 @@ public:
   }
 };
 
+class SingleRedPixel : public DemoRunner {
+public:
+  SingleRedPixel(Canvas *m) : DemoRunner(m) {}
+  void Run() override {
+    const int x = 64;
+    const int y = canvas()->height() / 2;
+
+    canvas()->Clear();
+    if (x < canvas()->width()) {
+      canvas()->SetPixel(x, y, 255, 0, 0);
+    }
+
+    while (!interrupt_received) {
+      usleep(100 * 1000);
+    }
+  }
+};
+
 class MovingLine : public DemoRunner {
 public:
   MovingLine(RGBMatrix *m, int delay_ms, bool use_swap_on_vsync)
@@ -1254,7 +1272,8 @@ static int usage(const char *progname) {
           "\t10 - Evolution of color (-m <time-step-ms>)\n"
           "\t11 - Brightness pulse generator\n"
           "\t12 - Colorful rotating 3d cube [direct|swap]\n"
-          "\t13 - Moving vertical, horizontal, and diagonal lines [direct|swap] (-m <time-step-ms>)\n");
+          "\t13 - Moving vertical, horizontal, and diagonal lines [direct|swap] (-m <time-step-ms>)\n"
+          "\t14 - Single red pixel at x=64, y=height/2\n");
   fprintf(stderr, "Example:\n\t%s -D 1 runtext.ppm\n"
           "Scrolls the runtext until Ctrl-C is pressed\n", progname);
   return 1;
@@ -1407,6 +1426,10 @@ int main(int argc, char *argv[]) {
       demo_runner = new MovingLine(matrix, scroll_ms, use_swap_on_vsync);
       break;
     }
+
+    case 14:
+      demo_runner = new SingleRedPixel(canvas);
+      break;
   }
 
   if (demo_runner == NULL)

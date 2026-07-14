@@ -63,6 +63,7 @@ cdef extern from "led-matrix.h" namespace "rgb_matrix::RGBMatrix":
         int row_address_type
         int spwm_row_address_type
         int spwm_scan_rows
+        int spwm_data_layout
         int spwm_register_config
         int multiplexing
 

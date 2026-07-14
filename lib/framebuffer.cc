@@ -629,14 +629,19 @@ static void InitFM6127(GPIO *io, const struct HardwareMapping &h, int columns) {
 /*static*/ void Framebuffer::InitializePanels(GPIO *io,
                                               const char *panel_type,
                                               int columns,
+                                              int panel_columns,
                                               int spwm_row_address_type,
                                               int spwm_scan_rows,
-                                              int spwm_register_config) {
+                                              int spwm_data_layout,
+                                              int spwm_register_config,
+                                              int multiplexing) {
   const bool spwm_panel_handled =
-      spwm_initialize_panel_type(panel_type, columns,
+      spwm_initialize_panel_type(panel_type, columns, panel_columns,
                                  spwm_row_address_type,
                                  spwm_scan_rows,
-                                 spwm_register_config);
+                                 spwm_data_layout,
+                                 spwm_register_config,
+                                 multiplexing);
 
   if (!panel_type || panel_type[0] == '\0') return;
   if (Rp1BackendInitializePanelsIfActive(*hardware_mapping_, panel_type,

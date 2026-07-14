@@ -21,8 +21,9 @@ public struct RGBLedMatrixOptions
     /// The "cols" are the number of columns per panel. Typically something
     /// like 32, but also 64 is possible. Sometimes even 40.
     /// <c>cols * chain_length</c> is the total length of the display, so you can
-    /// represent a 64 wide display as cols=32, chain=2 or cols=64, chain=1;
-    /// same thing, but more convenient to think of.
+    /// represent a 64 wide display as cols=32, chain=2 or cols=64, chain=1.
+    /// Full-height SPWM data layouts require this to remain the physical width
+    /// of each panel so every chained panel is split independently.
     /// </summary>
     public int Cols = 32;
 
@@ -86,6 +87,14 @@ public struct RGBLedMatrixOptions
     /// Optional SPWM scan-row override. 0 keeps the panel default.
     /// </summary>
     public int SpwmScanRows = 0;
+
+    /// <summary>
+    /// SPWM framebuffer data layout. 0 selects the panel default, 1 maps a
+    /// full-height panel's left/right lanes to RGB2/RGB1, and 2 swaps them.
+    /// Layouts 1 and 2 require SPWM row-address type 1 or 2 and cannot be
+    /// combined with multiplexing.
+    /// </summary>
+    public int SpwmDataLayout = 0;
 
     /// <summary>
     /// SPWM register payload variant. -1 keeps panel-specific automatic

@@ -18,6 +18,7 @@ internal struct InternalRGBLedMatrixOptions
     public int row_address_type;
     public int spwm_row_address_type;
     public int spwm_scan_rows;
+    public int spwm_data_layout;
     public int spwm_register_config;
     public int multiplexing;
     public byte disable_hardware_pulsing;
@@ -52,6 +53,7 @@ internal struct InternalRGBLedMatrixOptions
         row_address_type = opt.RowAddressType;
         spwm_row_address_type = opt.SpwmRowAddressType;
         spwm_scan_rows = opt.SpwmScanRows;
+        spwm_data_layout = opt.SpwmDataLayout;
         spwm_register_config = opt.SpwmRegisterConfig;
         disable_busy_waiting = (byte)(opt.DisableBusyWaiting ? 1 : 0);
     }

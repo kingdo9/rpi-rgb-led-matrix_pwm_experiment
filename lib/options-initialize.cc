@@ -193,6 +193,9 @@ static bool FlagInit(int &argc, char **&argv,
       if (ConsumeIntFlag("spwm-scan", it, end,
                          &mopts->spwm_scan_rows, &err))
         continue;
+      if (ConsumeIntFlag("spwm-data-layout", it, end,
+                         &mopts->spwm_data_layout, &err))
+        continue;
       if (ConsumeIntFlag("spwm-register-config", it, end,
                          &mopts->spwm_register_config, &err))
         continue;
@@ -360,6 +363,8 @@ void PrintMatrixFlags(FILE *out, const RGBMatrix::Options &d,
           "\t--led-spwm-row-addr-type=<0..2>: SPWM-only row-address transport. 0 = direct A-E row flow; 1 = shift-register blank-clock A/C row-select; 2 = shift-register blank-clock A+B with wrap-C row-select "
           "(Default: 0).\n"
           "\t--led-spwm-scan=<rows>    : SPWM-only scan-row override e.g 43 for 1/43 (Default: %d).\n"
+          "\t--led-spwm-data-layout=<0..2>: SPWM data layout. 0 = panel default; 1 = full-height left on RGB2/right on RGB1; 2 = full-height left on RGB1/right on RGB2."
+          "(Default: %d).\n"
           "\t--led-spwm-register-config=<-1..1>: SPWM register payload variant. -1 = automatic, 0 = default, 1 = alternate "
           "(Default: %d).\n\n"
           "\t--led-%sshow-refresh        : %show refresh rate.\n"
@@ -382,7 +387,7 @@ void PrintMatrixFlags(FILE *out, const RGBMatrix::Options &d,
           available_mappers.c_str(),
           internal::Framebuffer::kBitPlanes, d.pwm_bits,
           d.brightness, d.scan_mode,
-          d.spwm_scan_rows, d.spwm_register_config,
+          d.spwm_scan_rows, d.spwm_data_layout, d.spwm_register_config,
           d.show_refresh_rate ? "no-" : "", d.show_refresh_rate ? "Don't s" : "S",
           d.limit_refresh_rate_hz,
           d.inverse_colors ? "no-" : "",    d.inverse_colors ? "off" : "on",
@@ -479,6 +484,38 @@ bool RGBMatrix::Options::Validate(std::string *err_in) const {
   if (spwm_scan_rows < 0) {
     err->append("SPWM scan row count must be 0 (use rows/2) or a positive number.\n");
     success = false;
+  }
+
+  if (spwm_data_layout < 0 || spwm_data_layout > 2) {
+    err->append("SPWM data layout values can be 0 (panel default), 1 (full-height left on RGB2/right on RGB1), or 2 (full-height left on RGB1/right on RGB2).\n");
+    success = false;
+  } else {
+    const int spwm_effective_data_layout =
+        internal::spwm_resolve_data_layout(panel_type, spwm_data_layout);
+    const bool spwm_profile_full_height_layout =
+        spwm_data_layout == 0 && spwm_effective_data_layout > 0 &&
+        internal::spwm_row_address_type_uses_blank_clock(
+            spwm_row_address_type) &&
+        spwm_scan_rows == rows;
+    if (spwm_data_layout > 0 || spwm_profile_full_height_layout) {
+      if (!internal::spwm_row_address_type_uses_blank_clock(
+              spwm_row_address_type)) {
+        err->append("SPWM full-height data layouts 1 and 2 require --led-spwm-row-addr-type=1 or 2.\n");
+        success = false;
+      }
+      if (spwm_scan_rows != rows) {
+        err->append("SPWM full-height data layouts 1 and 2 require --led-spwm-scan to equal --led-rows.\n");
+        success = false;
+      }
+      if (cols % 32 != 0) {
+        err->append("SPWM full-height data layouts 1 and 2 require --led-cols to be divisible by 32.\n");
+        success = false;
+      }
+      if (multiplexing != 0) {
+        err->append("SPWM full-height data layouts 1 and 2 cannot be combined with --led-multiplexing.\n");
+        success = false;
+      }
+    }
   }
 
   if (spwm_register_config < -1 || spwm_register_config > 1) {

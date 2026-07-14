@@ -162,6 +162,10 @@ cdef class RGBMatrixOptions:
         def __get__(self): return self.__options.spwm_scan_rows
         def __set__(self, int value): self.__options.spwm_scan_rows = value
 
+    property spwm_data_layout:
+        def __get__(self): return self.__options.spwm_data_layout
+        def __set__(self, int value): self.__options.spwm_data_layout = value
+
     property spwm_register_config:
         def __get__(self): return self.__options.spwm_register_config
         def __set__(self, int value): self.__options.spwm_register_config = value

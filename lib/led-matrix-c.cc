@@ -68,6 +68,7 @@ static struct RGBLedMatrix *led_matrix_create_from_options_optional_edit(
     // default constructor that sets some values. These we override with the
     // C-struct values if available.
     // We assume everything non-zero has an explicit value.
+    default_opts.spwm_data_layout = opts->spwm_data_layout;
     default_opts.spwm_register_config = opts->spwm_register_config;
 #define OPT_COPY_IF_SET(o) if (opts->o) default_opts.o = opts->o
     OPT_COPY_IF_SET(hardware_mapping);
@@ -133,6 +134,7 @@ static struct RGBLedMatrix *led_matrix_create_from_options_optional_edit(
     ACTUAL_VALUE_BACK_TO_OPT(row_address_type);
     ACTUAL_VALUE_BACK_TO_OPT(spwm_row_address_type);
     ACTUAL_VALUE_BACK_TO_OPT(spwm_scan_rows);
+    ACTUAL_VALUE_BACK_TO_OPT(spwm_data_layout);
     ACTUAL_VALUE_BACK_TO_OPT(spwm_register_config);
     ACTUAL_VALUE_BACK_TO_OPT(multiplexing);
     ACTUAL_VALUE_BACK_TO_OPT(disable_hardware_pulsing);

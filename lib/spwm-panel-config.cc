@@ -62,6 +62,8 @@ SPWM_Panel_Settings spwm_make_default_panel_settings() {
   SPWM_Panel_Settings spwm_settings = {};
   spwm_settings.default_rows = 64;
   spwm_settings.default_columns = 128;
+  spwm_settings.default_data_layout =
+      SPWM_DATA_LAYOUT_FULL_HEIGHT_LEFT_RGB2;
   spwm_settings.upload_channels_per_chip = 16;
   spwm_settings.upload_word_bits = 16;
   spwm_settings.upload_chip_count = 0;  // derive from columns / channels_per_chip

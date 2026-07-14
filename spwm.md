@@ -47,42 +47,63 @@ NOTE **--led-spwm-register-config** | Some drivers like the SM16380SH an alterna
 --led-spwm-row-addr-type=0 - DP32019B Direct \
 --led-spwm-row-addr-type=1 - DP32020A Shift Register
 --led-spwm-row-addr-type=2 - DP32020A Shift Register Variation
+<br><br>
+For full-height row-address type 1/2 panels eg 128x64 64S `--led-spwm-scan=64`\
+ `--led-spwm-data-layout=1`
+maps the left/right halves to RGB2/RGB1 and\
+ `--led-spwm-data-layout=2` swaps those lanes.
 
-**Don't worry about flicker as S-PWM devices have an internal refresh rate much higher, it is only the frame content changes when we refer to for 60fps**
+These layouts require `--led-spwm-scan` to equal `--led-rows` and
+`--led-cols` to be divisible by 32, and cannot be combined with
+`--led-multiplexing`. Value `0` uses the panel profile default. On a chain,
+`--led-cols` must be the physical width of one panel so each panel is split
+independently.<br><br>
+
+**Don't worry about flicker as S-PWM devices have an internal refresh rate much higher, it is only the frame content changes when we refer to 60fps**
 
 Assuming Hzeller library is installed in /opt/rpi-rgb-led-matrix
 
 Pi 4 - FM6373 / DP32019B 128x64 Example
 
+    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D8 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=5 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=fm6373 --led-spwm-row-addr-type=0
 
-    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix/examples-api-use/demo -D8 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=5 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=fm6373 --led-spwm-row-addr-type=0
+Pi 4 - FM6373 / DP32019B 128x64 - Parallel (Active3 Hat) - Two Displays Side By Side - Example
+
+    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D8 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=5 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=fm6373 --led-spwm-row-addr-type=0 --led-parallel=2 --led-pixel-mapper="StackToRow"
+
+Pi 4 - FM6373 / DP32020B 128x64 64S Example
+
+    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D8 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=5 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=fm6373 --led-spwm-row-addr-type=1 --led-spwm-scan=64 --led-spwm-data-layout=1 --led-spwm-register-config=1
 
 Pi 4 - FM6363 / DP32020A 128x64 Example
 
-    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix/examples-api-use/demo -D8 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=5 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=fm6363 --led-spwm-row-addr-type=1
+    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D8 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=5 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=fm6363 --led-spwm-row-addr-type=1
 
 Pi 4 - ICND1065L 172x86 Example
 
-    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix/examples-api-use/demo -D8 --led-rows=86 --led-cols=172 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=5 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=icnd1065l --led-spwm-row-addr-type=2 --led-spwm-scan=43
+    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D8 --led-rows=86 --led-cols=172 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=5 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=icnd1065l --led-spwm-row-addr-type=2 --led-spwm-scan=43
+
+This ICND1065L example uploads paired vertical rows because scan 43 is half of
+the 86-row panel height. Full-height data layouts 1/2 do not apply to it.
 
 Pi 4 - SM16380SH 128x64 Example
 
-    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix/examples-api-use/demo -D8 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=3 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=sm16380sh --led-spwm-row-addr-type=0
+    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D8 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=3 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=sm16380sh --led-spwm-row-addr-type=0
 
     ### If you notice any display glitches, you can try an alternative register block --led-spwm-register-config=1
-    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix/examples-api-use/demo -D8 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=3 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=sm16380sh --led-spwm-row-addr-type=0 --led-spwm-register-config=1
+    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D8 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=3 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=sm16380sh --led-spwm-row-addr-type=0 --led-spwm-register-config=1
 
 Pi 3 - FM6373 / DP32020A 128x64 Example
 
-    SPWM_END_OF_FRAME_EXTRA_ROW_CYCLES=2 taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix/examples-api-use/demo -D8 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-panel-type=fm6373 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=3 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting
+    SPWM_END_OF_FRAME_EXTRA_ROW_CYCLES=2 taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D8 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-panel-type=fm6373 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=3 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting
 
 Pi 5 - SM16380SH / Shift Register row selector 128x64 Example
 
-    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix/examples-api-use/demo -D3 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=1 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=sm16380sh --led-spwm-row-addr-type=1 --led-rp1-pio=0    
+    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D3 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=1 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=sm16380sh --led-spwm-row-addr-type=1 --led-rp1-pio=0    
 
 Pi 5 - FM6363 / DP32020A 128x64 Example
 
-    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix/examples-api-use/demo -D3 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=0 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=fm6363 --led-spwm-row-addr-type=1 
+    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D3 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=0 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=fm6363 --led-spwm-row-addr-type=1 
 
 ---
 

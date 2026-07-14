@@ -28,6 +28,7 @@ Options:
         --led-row-addr-type=<0..5>: 0 = default; 1 = AB-addressed panels; 2 = direct row select; 3 = ABC-addressed panels; 4 = ABC Shift + DE direct; 5 = shift-register row select (Default: 0).
         --led-spwm-row-addr-type=<0..2>: SPWM-only row-address transport. 0 = direct A-E row flow; 1 = shift-register blank-clock A/C row-select; 2 = shift-register blank-clock A+B with wrap-C row-select (Default: 0).
         --led-spwm-scan=<rows>    : SPWM-only scan-row override e.g 43 for 1/43 (Default: 0).
+        --led-spwm-data-layout=<0..2>: SPWM data layout. 0 = panel default; 1 = full-height left on RGB2/right on RGB1; 2 = full-height left on RGB1/right on RGB2. Cannot be combined with --led-multiplexing (Default: 0).
         --led-show-refresh        : Show refresh rate.
         --led-limit-refresh=<Hz>  : Limit refresh rate to this frequency in Hz. Useful to keep a
                                     constant refresh rate on loaded system. 0=no limit. Default: 0
