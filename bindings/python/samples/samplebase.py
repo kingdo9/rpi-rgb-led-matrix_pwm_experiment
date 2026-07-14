@@ -34,6 +34,13 @@ class SampleBase(object):
         self.parser.add_argument("--led-spwm-scan", action="store", help="SPWM scan-row count for row-select types 1/2. 0 = use rows/2", default=0, type=int)
         self.parser.add_argument("--led-spwm-data-layout", action="store", help="SPWM data layout. 0 = panel default; 1 = full-height left on RGB2/right on RGB1; 2 = reversed; cannot be combined with --led-multiplexing", default=0, type=int, choices=[0,1,2])
         self.parser.add_argument("--led-spwm-register-config", action="store", help="SPWM register payload variant. -1 = automatic; 0 = default; 1 = alternate", default=-1, type=int, choices=[-1,0,1])
+        self.parser.add_argument("--led-spwm-force-register", action="store", help="Backward-compatible override for the profile's rotating RGB register slot", default=None, type=str)
+        self.parser.add_argument("--led-spwm-force-register1", action="store", help="Override SPWM profile register slot 1; fixed slots require one word, rotating slots accept a list", default=None, type=str)
+        self.parser.add_argument("--led-spwm-force-register2", action="store", help="Override SPWM profile register slot 2; fixed slots require one word, rotating slots accept a list", default=None, type=str)
+        self.parser.add_argument("--led-spwm-force-register3", action="store", help="Override SPWM profile register slot 3; fixed slots require one word, rotating slots accept a list", default=None, type=str)
+        self.parser.add_argument("--led-spwm-force-register4", action="store", help="Override SPWM profile register slot 4; fixed slots require one word, rotating slots accept a list", default=None, type=str)
+        self.parser.add_argument("--led-spwm-force-register5", action="store", help="Override SPWM profile register slot 5; fixed slots require one word, rotating slots accept a list", default=None, type=str)
+        self.parser.add_argument("--led-spwm-force-register6", action="store", help="Override SPWM profile register slot 6; fixed slots require one word, rotating slots accept a list", default=None, type=str)
         self.parser.add_argument("--led-multiplexing", action="store", help="Multiplexing type: 0=direct; 1=strip; 2=checker; 3=spiral; 4=ZStripe; 5=ZnMirrorZStripe; 6=coreman; 7=Kaler2Scan; 8=ZStripeUneven... (Default: 0)", default=0, type=int)
         self.parser.add_argument("--led-panel-type", action="store", help="Needed to initialize special panels. Supported: 'FM6126A', 'FM6127', 'FM6373', 'ICND1065L', 'SM16380SH', 'FM6363'", default="", type=str)
         self.parser.add_argument("--led-no-drop-privs", dest="drop_privileges", help="Don't drop privileges from 'root' after initializing the hardware.", action='store_false')
@@ -62,6 +69,20 @@ class SampleBase(object):
         options.spwm_scan_rows = self.args.led_spwm_scan
         options.spwm_data_layout = self.args.led_spwm_data_layout
         options.spwm_register_config = self.args.led_spwm_register_config
+        if self.args.led_spwm_force_register is not None:
+          options.spwm_force_register = self.args.led_spwm_force_register
+        if self.args.led_spwm_force_register1 is not None:
+          options.spwm_force_register1 = self.args.led_spwm_force_register1
+        if self.args.led_spwm_force_register2 is not None:
+          options.spwm_force_register2 = self.args.led_spwm_force_register2
+        if self.args.led_spwm_force_register3 is not None:
+          options.spwm_force_register3 = self.args.led_spwm_force_register3
+        if self.args.led_spwm_force_register4 is not None:
+          options.spwm_force_register4 = self.args.led_spwm_force_register4
+        if self.args.led_spwm_force_register5 is not None:
+          options.spwm_force_register5 = self.args.led_spwm_force_register5
+        if self.args.led_spwm_force_register6 is not None:
+          options.spwm_force_register6 = self.args.led_spwm_force_register6
         options.multiplexing = self.args.led_multiplexing
         options.pwm_bits = self.args.led_pwm_bits
         options.pwm_dither_bits = self.args.led_pwm_dither_bits

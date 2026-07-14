@@ -112,7 +112,10 @@ public:
                                int spwm_scan_rows,
                                int spwm_data_layout,
                                int spwm_register_config,
-                               int multiplexing);
+                               int multiplexing,
+                               const char *spwm_force_register,
+                               const char *const *spwm_force_registers,
+                               size_t spwm_force_register_count);
   // Reset internal static globals so InitGPIO() can re-run with new params.
   static void ResetGlobals();
 

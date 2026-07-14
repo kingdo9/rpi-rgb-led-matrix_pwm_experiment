@@ -76,6 +76,13 @@ cdef extern from "led-matrix.h" namespace "rgb_matrix::RGBMatrix":
         const char *panel_type
         int limit_refresh_rate_hz
         bool disable_busy_waiting
+        const char *spwm_force_register
+        const char *spwm_force_register1
+        const char *spwm_force_register2
+        const char *spwm_force_register3
+        const char *spwm_force_register4
+        const char *spwm_force_register5
+        const char *spwm_force_register6
 
 cdef extern from "graphics.h" namespace "rgb_matrix":
     cdef struct Color:

@@ -162,6 +162,45 @@ static bool FlagInit(int &argc, char **&argv,
       if (ConsumeStringFlag("panel-type", it, end,
                             &mopts->panel_type, &err))
         continue;
+      if (ConsumeStringFlag("spwm-force-register", it, end,
+                            &mopts->spwm_force_register, &err))
+        continue;
+      const char **spwm_force_register_options[] = {
+          &mopts->spwm_force_register1,
+          &mopts->spwm_force_register2,
+          &mopts->spwm_force_register3,
+          &mopts->spwm_force_register4,
+          &mopts->spwm_force_register5,
+          &mopts->spwm_force_register6,
+      };
+      static_assert(
+          sizeof(spwm_force_register_options) /
+                  sizeof(spwm_force_register_options[0]) ==
+              internal::SPWM_FORCE_REGISTER_COUNT,
+          "SPWM force-register option count is out of sync");
+      bool spwm_force_register_consumed = false;
+      for (size_t spwm_register_index = 0;
+           spwm_register_index < internal::SPWM_FORCE_REGISTER_COUNT;
+           ++spwm_register_index) {
+        char spwm_flag_name[32];
+        snprintf(spwm_flag_name, sizeof(spwm_flag_name),
+                 "spwm-force-register%zu", spwm_register_index + 1);
+        if (ConsumeStringFlag(spwm_flag_name, it, end,
+                              spwm_force_register_options[spwm_register_index],
+                              &err)) {
+          spwm_force_register_consumed = true;
+          break;
+        }
+      }
+      if (spwm_force_register_consumed) continue;
+      if (strncmp(*it, "--led-spwm-force-register",
+                  strlen("--led-spwm-force-register")) == 0) {
+        fprintf(stderr,
+                "SPWM force-register number must be in the range 1..%zu: %s\n",
+                internal::SPWM_FORCE_REGISTER_COUNT, *it);
+        ++err;
+        continue;
+      }
       if (ConsumeIntFlag("rows", it, end, &mopts->rows, &err))
         continue;
       if (ConsumeIntFlag("cols", it, end, &mopts->cols, &err))
@@ -366,7 +405,9 @@ void PrintMatrixFlags(FILE *out, const RGBMatrix::Options &d,
           "\t--led-spwm-data-layout=<0..2>: SPWM data layout. 0 = panel default; 1 = full-height left on RGB2/right on RGB1; 2 = full-height left on RGB1/right on RGB2."
           "(Default: %d).\n"
           "\t--led-spwm-register-config=<-1..1>: SPWM register payload variant. -1 = automatic, 0 = default, 1 = alternate "
-          "(Default: %d).\n\n"
+          "(Default: %d).\n"
+          "\t--led-spwm-force-register=<words>: Backward-compatible shortcut for the profile's rotating RGB register slot (currently register 3).\n"
+          "\t--led-spwm-force-register<N>=<words>: Override 1-based SPWM profile register slot N, where N is 1..6. Fixed slots require one 16-bit word; rotating RGB slots accept a comma-separated sequence. Whitespace is allowed.\n\n"
           "\t--led-%sshow-refresh        : %show refresh rate.\n"
           "\t--led-limit-refresh=<Hz>  : Limit refresh rate to this frequency in Hz. Useful to keep a\n"
           "\t                            constant refresh rate on loaded system. 0=no limit. Default: %d\n"
@@ -521,6 +562,66 @@ bool RGBMatrix::Options::Validate(std::string *err_in) const {
   if (spwm_register_config < -1 || spwm_register_config > 1) {
     err->append("SPWM register config values can be -1 (automatic), 0 (default register block), or 1 (alternate register block).\n");
     success = false;
+  }
+
+  if (spwm_force_register != nullptr) {
+    std::vector<uint16_t> spwm_forced_register_words;
+    if (!internal::spwm_parse_forced_register_words(
+            spwm_force_register, &spwm_forced_register_words)) {
+      err->append("SPWM forced register must be a non-empty comma-separated list of 16-bit values such as 0x0000, 0x0100.\n");
+      success = false;
+    } else if (!internal::spwm_panel_supports_forced_register(panel_type)) {
+      err->append("--led-spwm-force-register requires an SPWM panel profile with a rotating RGB register block.\n");
+      success = false;
+    }
+  }
+
+  const char *spwm_numbered_force_registers[] = {
+      spwm_force_register1,
+      spwm_force_register2,
+      spwm_force_register3,
+      spwm_force_register4,
+      spwm_force_register5,
+      spwm_force_register6,
+  };
+  static_assert(
+      sizeof(spwm_numbered_force_registers) /
+              sizeof(spwm_numbered_force_registers[0]) ==
+          internal::SPWM_FORCE_REGISTER_COUNT,
+      "SPWM force-register validation count is out of sync");
+  for (size_t spwm_register_index = 0;
+       spwm_register_index < internal::SPWM_FORCE_REGISTER_COUNT;
+       ++spwm_register_index) {
+    const char *spwm_force_value =
+        spwm_numbered_force_registers[spwm_register_index];
+    if (spwm_force_value == nullptr) continue;
+
+    const size_t spwm_register_number = spwm_register_index + 1;
+    const std::string spwm_flag_name =
+        "--led-spwm-force-register" + std::to_string(spwm_register_number);
+    std::vector<uint16_t> spwm_forced_register_words;
+    if (!internal::spwm_parse_forced_register_words(
+            spwm_force_value, &spwm_forced_register_words)) {
+      err->append(spwm_flag_name)
+          .append(" must be a non-empty comma-separated list of 16-bit values.\n");
+      success = false;
+      continue;
+    }
+
+    const internal::SPWM_Register_Slot_Type spwm_register_slot_type =
+        internal::spwm_get_panel_register_slot_type(
+            panel_type, spwm_register_number);
+    if (spwm_register_slot_type == internal::SPWM_REGISTER_SLOT_NONE) {
+      err->append(spwm_flag_name)
+          .append(" does not exist in the selected SPWM panel profile.\n");
+      success = false;
+    } else if (spwm_register_slot_type ==
+                   internal::SPWM_REGISTER_SLOT_FIXED &&
+               spwm_forced_register_words.size() != 1) {
+      err->append(spwm_flag_name)
+          .append(" targets a fixed register and requires exactly one 16-bit value.\n");
+      success = false;
+    }
   }
 
 #ifdef ENABLE_WIDE_GPIO_COMPUTE_MODULE

@@ -38,6 +38,23 @@ NOTE **--led-show-refresh** may cause some glitches, so disable this once you ha
 
 NOTE **--led-spwm-register-config** | Some drivers like the SM16380SH an alternative register block for 07 is added. This can help with timing on different Pi models. So test both =1 and =0 if you notice any display glitches.
 
+NOTE **--led-spwm-force-register1** through **--led-spwm-force-register6** | Each option overrides one 1-based panel-profile register slot. A fixed slot requires exactly one 16-bit word, which is repeated across the panel's driver chips. A rotating RGB slot accepts a comma-separated list; one word is sent per frame to R/G/B, and the list wraps at the end. An omitted option keeps the slot selected by the panel profile and `--led-spwm-register-config`.
+
+    --led-spwm-force-register1=0x00aa
+
+**--led-spwm-force-register** remains the backward-compatible shortcut for the profile's rotating RGB slot, currently register 3 in every profile that has one. It is applied before the numbered overrides, so `--led-spwm-force-register3` wins when both forms target the same slot. FM6373 and ICND1065L have fixed slots 1, 2, 4, and 5 plus rotating RGB slot 3; SM16380SH also has fixed slot 6; FM6363 and FM6353 have fixed slots 1 through 5 and no rotating RGB slot.
+
+    --led-spwm-force-register="0x0000, 0x0100, 0x021f, 0x033f,
+        0x0402, 0x0508, 0x0602, 0x0720,
+        0x0820, 0x0900, 0x0a00, 0x0b00,
+        0x0c01, 0x0d01, 0x0e04, 0x0f01,
+        0x10c2, 0x1121, 0x1201, 0x1300,
+        0x1400, 0x1500, 0x1600, 0x17f0,
+        0x181f, 0x1900, 0x1a1f, 0x1b10,
+        0x1c2a, 0x1d0a, 0x1e42, 0x1f04,
+        0x2008, 0x2101, 0x221c,
+        0x7000, 0x7100, 0x7200, 0x7300"
+
 ---
 
 ### How to run S-PWM panels

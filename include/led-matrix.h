@@ -182,6 +182,19 @@ public:
     // Sleep instead of busy wait to free CPU cycles but get slightly less
     // accurate frame timing.
     bool disable_busy_waiting;   // Flag: --led-busy-waiting
+
+    // Backward-compatible shortcut for the active SPWM panel profile's
+    // rotating RGB register block. The same sequence is applied to R/G/B.
+    const char *spwm_force_register;  // Flag: --led-spwm-force-register
+
+    // Optional per-slot SPWM register overrides. Fixed slots require one word;
+    // rotating RGB slots accept a sequence. Unspecified slots keep defaults.
+    const char *spwm_force_register1;  // Flag: --led-spwm-force-register1
+    const char *spwm_force_register2;  // Flag: --led-spwm-force-register2
+    const char *spwm_force_register3;  // Flag: --led-spwm-force-register3
+    const char *spwm_force_register4;  // Flag: --led-spwm-force-register4
+    const char *spwm_force_register5;  // Flag: --led-spwm-force-register5
+    const char *spwm_force_register6;  // Flag: --led-spwm-force-register6
   };
 
   // Factory to create a matrix. Additional functionality includes dropping

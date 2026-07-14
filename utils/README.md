@@ -33,6 +33,8 @@ the [toplevel readme](../README.md#changing-parameters-via-command-line-flags)
  --led-spwm-scan=<rows>    : SPWM-only scan-row override e.g 43 for 1/43 (Default: 0)
  --led-spwm-data-layout=<0..2>: SPWM data layout. 0 = panel default; 1 = full-height left on RGB2/right on RGB1; 2 = full-height left on RGB1/right on RGB2. Cannot be combined with --led-multiplexing (Default: 0)
  --led-spwm-register-config=<-1..1>: SPWM register payload variant. -1 = automatic, 0 = default, 1 = alternate (Default: -1)
+ --led-spwm-force-register1=<words> ... --led-spwm-force-register6=<words>: Override individual 1-based panel-profile register slots. Fixed slots require one word; rotating RGB slots accept a wrapping sequence. Omitted slots keep their panel defaults; selecting an absent slot is an error.
+ --led-spwm-force-register=<words>: Backward-compatible shortcut for the profile's rotating RGB slot, currently register 3 where present. Numbered overrides take precedence (Default: unset)
  --led-show-refresh        : Show refresh rate.
  --led-inverse             : Switch if your matrix has inverse colors on.
  --led-rgb-sequence        : Switch if your matrix has led colors swapped (Default: "RGB")

@@ -29,6 +29,9 @@ Options:
         --led-spwm-row-addr-type=<0..2>: SPWM-only row-address transport. 0 = direct A-E row flow; 1 = shift-register blank-clock A/C row-select; 2 = shift-register blank-clock A+B with wrap-C row-select (Default: 0).
         --led-spwm-scan=<rows>    : SPWM-only scan-row override e.g 43 for 1/43 (Default: 0).
         --led-spwm-data-layout=<0..2>: SPWM data layout. 0 = panel default; 1 = full-height left on RGB2/right on RGB1; 2 = full-height left on RGB1/right on RGB2. Cannot be combined with --led-multiplexing (Default: 0).
+        --led-spwm-register-config=<-1..1>: SPWM register payload variant. -1 = automatic, 0 = default, 1 = alternate (Default: -1).
+        --led-spwm-force-register1=<words> ... --led-spwm-force-register6=<words>: Override individual 1-based panel-profile register slots. Fixed slots require one word; rotating RGB slots accept a wrapping sequence. Omitted slots keep their panel defaults; selecting an absent slot is an error.
+        --led-spwm-force-register=<words>: Backward-compatible shortcut for the profile's rotating RGB slot, currently register 3 where present. Numbered overrides take precedence (Default: unset).
         --led-show-refresh        : Show refresh rate.
         --led-limit-refresh=<Hz>  : Limit refresh rate to this frequency in Hz. Useful to keep a
                                     constant refresh rate on loaded system. 0=no limit. Default: 0

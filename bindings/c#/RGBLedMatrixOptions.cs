@@ -103,6 +103,48 @@ public struct RGBLedMatrixOptions
     public int SpwmRegisterConfig = -1;
 
     /// <summary>
+    /// Backward-compatible override for the panel profile's rotating RGB
+    /// register slot. The sequence is applied identically to every RGB channel.
+    /// </summary>
+    public string? SpwmForceRegister = null;
+
+    /// <summary>
+    /// Overrides SPWM profile register slot 1. Fixed slots require one word;
+    /// rotating slots accept a comma-separated sequence.
+    /// </summary>
+    public string? SpwmForceRegister1 = null;
+
+    /// <summary>
+    /// Overrides SPWM profile register slot 2. Fixed slots require one word;
+    /// rotating slots accept a comma-separated sequence.
+    /// </summary>
+    public string? SpwmForceRegister2 = null;
+
+    /// <summary>
+    /// Overrides SPWM profile register slot 3. Fixed slots require one word;
+    /// rotating slots accept a comma-separated sequence.
+    /// </summary>
+    public string? SpwmForceRegister3 = null;
+
+    /// <summary>
+    /// Overrides SPWM profile register slot 4. Fixed slots require one word;
+    /// rotating slots accept a comma-separated sequence.
+    /// </summary>
+    public string? SpwmForceRegister4 = null;
+
+    /// <summary>
+    /// Overrides SPWM profile register slot 5. Fixed slots require one word;
+    /// rotating slots accept a comma-separated sequence.
+    /// </summary>
+    public string? SpwmForceRegister5 = null;
+
+    /// <summary>
+    /// Overrides SPWM profile register slot 6. Fixed slots require one word;
+    /// rotating slots accept a comma-separated sequence.
+    /// </summary>
+    public string? SpwmForceRegister6 = null;
+
+    /// <summary>
     /// Type of multiplexing.
     /// </summary>
     public Multiplexing Multiplexing = Multiplexing.Direct;

@@ -5,6 +5,7 @@
 #include "framebuffer-internal.h"
 
 #include <algorithm>
+#include <ctype.h>
 #include <errno.h>
 #include <limits.h>
 #include <stdlib.h>
@@ -91,6 +92,58 @@ void SPWM_Config::spwm_add_rgb_register(
   spwm_rgb_register.timing = spwm_timing;
 }
 
+// Replace one existing slot while preserving its profile-selected type and
+// timing. Fixed slots accept one word; RGB slots keep rotating through a list.
+bool SPWM_Config::spwm_force_register_words(
+    size_t spwm_register_index,
+    const std::vector<uint16_t> &spwm_words) {
+  if (spwm_register_index == 0 || spwm_words.empty() ||
+      spwm_register_index > register_data_.size()) {
+    return false;
+  }
+
+  if (spwm_has_rgb_register(spwm_register_index)) {
+    SPWM_RGB_Register &spwm_rgb_register =
+        rgb_registers_[spwm_register_index - 1];
+    for (std::vector<uint16_t> &spwm_channel_sequence :
+         spwm_rgb_register.channel_sequences) {
+      spwm_channel_sequence = spwm_words;
+    }
+    spwm_rgb_register.sequence_index = 0;
+    spwm_rgb_register.sequence_length = spwm_words.size();
+    return true;
+  }
+
+  const SPWM_Register_Data &spwm_register_data =
+      register_data_[spwm_register_index - 1];
+  if (spwm_words.size() != 1 || spwm_register_data.words == nullptr ||
+      spwm_register_data.word_count == 0) {
+    return false;
+  }
+
+  const SPWM_Register_Timing spwm_timing = spwm_register_data.timing;
+  spwm_add_register(spwm_register_index, spwm_words, &spwm_timing);
+  return true;
+}
+
+// Replace all rotating RGB payloads with the same user-supplied sequence for
+// each color channel. Fixed register slots and per-slot timing stay unchanged.
+bool SPWM_Config::spwm_force_rgb_register_words(
+    const std::vector<uint16_t> &spwm_words) {
+  if (spwm_words.empty()) return false;
+
+  bool spwm_forced_register = false;
+  for (size_t spwm_register_index = 1;
+       spwm_register_index <= rgb_registers_.size();
+       ++spwm_register_index) {
+    if (!spwm_has_rgb_register(spwm_register_index)) continue;
+    if (spwm_force_register_words(spwm_register_index, spwm_words)) {
+      spwm_forced_register = true;
+    }
+  }
+  return spwm_forced_register;
+}
+
 // Return the fixed payload for a 1-based register slot, or nullptr if the slot
 // is out of range.
 const SPWM_Register_Data *SPWM_Config::spwm_get_register_data(
@@ -141,6 +194,53 @@ SPWM_RGB_Frame SPWM_Config::spwm_next_rgb_frame(size_t spwm_register_index) {
     spwm_rgb_register.channel_sequences[2][spwm_sequence_index],
   };
   return spwm_rgb_frame;
+}
+
+// Parse the command-line register sequence without changing the destination on
+// failure. strtoul base 0 accepts the requested 0x-prefixed words.
+bool spwm_parse_forced_register_words(
+    const char *spwm_value, std::vector<uint16_t> *spwm_words) {
+  if (spwm_value == nullptr || spwm_words == nullptr) return false;
+
+  std::vector<uint16_t> spwm_parsed_words;
+  const char *spwm_cursor = spwm_value;
+  while (*spwm_cursor != '\0' &&
+         isspace(static_cast<unsigned char>(*spwm_cursor))) {
+    ++spwm_cursor;
+  }
+  if (*spwm_cursor == '\0') return false;
+
+  while (*spwm_cursor != '\0') {
+    if (*spwm_cursor == '-' || *spwm_cursor == '+') return false;
+
+    errno = 0;
+    char *spwm_end = nullptr;
+    const unsigned long spwm_word = strtoul(spwm_cursor, &spwm_end, 0);
+    if (errno != 0 || spwm_end == spwm_cursor || spwm_word > 0xfffful) {
+      return false;
+    }
+    spwm_parsed_words.push_back(static_cast<uint16_t>(spwm_word));
+    spwm_cursor = spwm_end;
+
+    while (*spwm_cursor != '\0' &&
+           isspace(static_cast<unsigned char>(*spwm_cursor))) {
+      ++spwm_cursor;
+    }
+    if (*spwm_cursor == '\0') {
+      *spwm_words = spwm_parsed_words;
+      return true;
+    }
+    if (*spwm_cursor != ',') return false;
+
+    ++spwm_cursor;
+    while (*spwm_cursor != '\0' &&
+           isspace(static_cast<unsigned char>(*spwm_cursor))) {
+      ++spwm_cursor;
+    }
+    if (*spwm_cursor == '\0') return false;
+  }
+
+  return false;
 }
 
 namespace {
@@ -2370,6 +2470,52 @@ bool spwm_is_panel_type(const char *spwm_panel_type) {
   return spwm_find_panel_profile(spwm_panel_type) != nullptr;
 }
 
+// Only profiles with an RGB register init step have rotating per-frame words
+// that can be replaced by --led-spwm-force-register.
+bool spwm_panel_supports_forced_register(const char *spwm_panel_type) {
+  const SPWM_Panel_Profile *spwm_profile =
+      spwm_find_panel_profile(spwm_panel_type);
+  if (spwm_profile == nullptr || spwm_profile->init_sequence.steps == nullptr) {
+    return false;
+  }
+
+  for (size_t spwm_step_index = 0;
+       spwm_step_index < spwm_profile->init_sequence.step_count;
+       ++spwm_step_index) {
+    if (spwm_profile->init_sequence.steps[spwm_step_index].type ==
+        SPWM_INIT_STEP_RGB_REGISTER) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Resolve a numbered option against the selected profile's init sequence.
+SPWM_Register_Slot_Type spwm_get_panel_register_slot_type(
+    const char *spwm_panel_type, size_t spwm_register_index) {
+  const SPWM_Panel_Profile *spwm_profile =
+      spwm_find_panel_profile(spwm_panel_type);
+  if (spwm_register_index == 0 || spwm_profile == nullptr ||
+      spwm_profile->init_sequence.steps == nullptr) {
+    return SPWM_REGISTER_SLOT_NONE;
+  }
+
+  for (size_t spwm_step_index = 0;
+       spwm_step_index < spwm_profile->init_sequence.step_count;
+       ++spwm_step_index) {
+    const SPWM_Init_Step &spwm_step =
+        spwm_profile->init_sequence.steps[spwm_step_index];
+    if (spwm_step.value != spwm_register_index) continue;
+    if (spwm_step.type == SPWM_INIT_STEP_RGB_REGISTER) {
+      return SPWM_REGISTER_SLOT_RGB;
+    }
+    if (spwm_step.type == SPWM_INIT_STEP_REGISTER) {
+      return SPWM_REGISTER_SLOT_FIXED;
+    }
+  }
+  return SPWM_REGISTER_SLOT_NONE;
+}
+
 int spwm_resolve_data_layout(const char *spwm_panel_type,
                              int spwm_data_layout) {
   if (spwm_data_layout != SPWM_DATA_LAYOUT_PROFILE_DEFAULT) {
@@ -2390,12 +2536,17 @@ bool spwm_initialize_panel_type(const char *spwm_panel_type, int spwm_columns,
                                 int spwm_scan_rows,
                                 int spwm_data_layout,
                                 int spwm_register_config,
-                                int spwm_multiplexing) {
+                                int spwm_multiplexing,
+                                const char *spwm_force_register,
+                                const char *const *spwm_force_registers,
+                                size_t spwm_force_register_count) {
   spwm_set_enabled(false);
   spwm_configure_panel_type(spwm_panel_type, spwm_columns, spwm_panel_columns,
                             spwm_row_address_type, spwm_scan_rows,
                             spwm_data_layout, spwm_register_config,
-                            spwm_multiplexing);
+                            spwm_multiplexing, spwm_force_register,
+                            spwm_force_registers,
+                            spwm_force_register_count);
 
   if (spwm_panel_type == nullptr || *spwm_panel_type == '\0') return false;
   if (!spwm_is_panel_type(spwm_panel_type)) return false;
@@ -2405,15 +2556,18 @@ bool spwm_initialize_panel_type(const char *spwm_panel_type, int spwm_columns,
 }
 
 // Load the chosen panel profile, record the requested row transport override,
-// apply any environment overrides, and rebuild the runtime register layout for
-// the active panel width.
+// apply environment overrides, rebuild the runtime register layout for the
+// active panel width, and then apply any forced register values.
 void spwm_configure_panel_type(const char *spwm_panel_type, int spwm_columns,
                                int spwm_panel_columns,
                                int spwm_row_address_type,
                                int spwm_scan_rows,
                                int spwm_data_layout,
                                int spwm_register_config,
-                               int spwm_multiplexing) {
+                               int spwm_multiplexing,
+                               const char *spwm_force_register,
+                               const char *const *spwm_force_registers,
+                               size_t spwm_force_register_count) {
   SPWM_Runtime_State &spwm_runtime_state = spwm_get_runtime_state();
   SPWM_Auto_Tune_Control &spwm_auto_tune_control =
       spwm_get_auto_tune_control_storage();
@@ -2446,6 +2600,30 @@ void spwm_configure_panel_type(const char *spwm_panel_type, int spwm_columns,
     spwm_runtime_state.config = spwm_default_profile.create_config(
         spwm_runtime_state.panel_settings, spwm_columns,
         spwm_row_address_type, spwm_register_config);
+  }
+
+  std::vector<uint16_t> spwm_forced_register_words;
+  if (spwm_force_register != nullptr &&
+      spwm_parse_forced_register_words(spwm_force_register,
+                                       &spwm_forced_register_words)) {
+    spwm_runtime_state.config.spwm_force_rgb_register_words(
+        spwm_forced_register_words);
+  }
+
+  if (spwm_force_registers != nullptr) {
+    for (size_t spwm_register_index = 0;
+         spwm_register_index < spwm_force_register_count;
+         ++spwm_register_index) {
+      if (spwm_force_registers[spwm_register_index] == nullptr) continue;
+
+      std::vector<uint16_t> spwm_numbered_register_words;
+      if (spwm_parse_forced_register_words(
+              spwm_force_registers[spwm_register_index],
+              &spwm_numbered_register_words)) {
+        spwm_runtime_state.config.spwm_force_register_words(
+            spwm_register_index + 1, spwm_numbered_register_words);
+      }
+    }
   }
 
   if (spwm_profile != nullptr &&

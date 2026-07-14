@@ -39,6 +39,8 @@ Shared SPWM flags:
 
 - `--led-spwm-row-addr-type=<0..2>` selects the SPWM row-address transport.
 - `--led-spwm-register-config=<0..1>` selects the SPWM register payload variant where applicable, example SM16380SH test both if any display glitches occur.
+- `--led-spwm-force-register1=<words>` through `--led-spwm-force-register6=<words>` override individual 1-based panel-profile register slots. 
+- `--led-spwm-force-register=<words>` override the panel profile's rotating RGB slot. Numbered overrides are applied afterward and win for the same slot.
 - `--led-spwm-scan=<rows>` overrides the SPWM scan-row count e.g values such as `43` for 1/43.
 - `--led-spwm-data-layout=<0..2>` controls full-height horizontal RGB lanes for row-address types 1/2. `0` uses the panel profile, `1` maps left/right to RGB2/RGB1, and `2` swaps those lanes. Layouts 1/2 require scan to equal rows, panel columns divisible by 32, and cannot be combined with `--led-multiplexing`. Each chained panel is split independently using `--led-cols`. The ICND1065L 86-row/43-scan example remains on layout 0's paired-row upload.
 
@@ -419,9 +421,11 @@ two chained panels, so then you'd use
 --led-spwm-scan=<rows>: SPWM-only scan-row override e.g 43 for 1/43 (Default: 0).
 --led-spwm-data-layout=<0..2>: SPWM data layout. 0 = panel default; 1 = full-height left on RGB2/right on RGB1; 2 = full-height left on RGB1/right on RGB2. Cannot be combined with --led-multiplexing (Default: 0).
 --led-spwm-register-config=<-1..1>: SPWM register payload variant. -1 = automatic, 0 = default, 1 = alternate (Default: -1).
+--led-spwm-force-register1=<words> ... --led-spwm-force-register6=<words>: Override individual 1-based panel-profile register slots. Fixed slots require one word; rotating RGB slots accept a wrapping sequence. Omitted slots keep their panel defaults; selecting a slot that the panel does not provide is an error.
+--led-spwm-force-register=<words>: Backward-compatible shortcut for the profile's rotating RGB slot, currently register 3 where present. Numbered overrides take precedence (Default: unset).
 ```
 
-For SPWM panels, `--led-panel-type` selects the panel profile, `--led-spwm-row-addr-type` selects the SPWM row-address path, `--led-spwm-scan` is only needed when the shift-register path needs a non-default scan count, `--led-spwm-data-layout` selects a full-height horizontal lane order, and `--led-spwm-register-config` can override panel-specific register variants.
+For SPWM panels, `--led-panel-type` selects the panel profile, `--led-spwm-row-addr-type` selects the SPWM row-address path, `--led-spwm-scan` is only needed when the shift-register path needs a non-default scan count, `--led-spwm-data-layout` selects a full-height horizontal lane order, and `--led-spwm-register-config` can override panel-specific register variants. Forced values are layered on that selected config: the unnumbered rotating-RGB shortcut is applied first, then numbered slot overrides are applied and win for the same slot. Slots without a force option retain the selected config.
 
 This option is useful for certain 64x64 or 32x16 panels. For 64x64 panels,
 that only have an `A` and `B` address line, you'd use `--led-row-addr-type=1`.

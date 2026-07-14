@@ -19,6 +19,13 @@ cdef class RGBMatrixOptions:
     cdef bytes __py_encoded_led_rgb_sequence
     cdef bytes __py_encoded_pixel_mapper_config
     cdef bytes __py_encoded_panel_type
+    cdef bytes __py_encoded_spwm_force_register
+    cdef bytes __py_encoded_spwm_force_register1
+    cdef bytes __py_encoded_spwm_force_register2
+    cdef bytes __py_encoded_spwm_force_register3
+    cdef bytes __py_encoded_spwm_force_register4
+    cdef bytes __py_encoded_spwm_force_register5
+    cdef bytes __py_encoded_spwm_force_register6
     cdef bytes __py_encoded_drop_priv_user
     cdef bytes __py_encoded_drop_priv_group
 

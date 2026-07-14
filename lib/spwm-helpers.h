@@ -49,6 +49,15 @@ enum SPWM_Data_Layout {
   SPWM_DATA_LAYOUT_FULL_HEIGHT_LEFT_RGB1 = 2,
 };
 
+// The current SPWM profiles expose at most six 1-based register slots.
+constexpr size_t SPWM_FORCE_REGISTER_COUNT = 6;
+
+enum SPWM_Register_Slot_Type {
+  SPWM_REGISTER_SLOT_NONE = 0,
+  SPWM_REGISTER_SLOT_FIXED,
+  SPWM_REGISTER_SLOT_RGB,
+};
+
 struct SPWM_Panel_Settings {
   static const int kMaxMissingColumnSlots = 4;
 
@@ -137,6 +146,17 @@ class SPWM_Config {
       const std::array<std::vector<uint16_t>, 3> &spwm_channel_sequences,
       const SPWM_Register_Timing &spwm_timing);
 
+  // Replace every rotating RGB register with one shared sequence while
+  // preserving each register slot's panel-specific latch timing.
+  bool spwm_force_rgb_register_words(
+      const std::vector<uint16_t> &spwm_words);
+
+  // Replace one existing register slot without changing whether the profile
+  // treats it as fixed or as a rotating RGB sequence.
+  bool spwm_force_register_words(
+      size_t spwm_register_index,
+      const std::vector<uint16_t> &spwm_words);
+
   // Return true when the given register slot is backed by a rotating RGB
   // sequence instead of a fixed payload.
   bool spwm_has_rgb_register(size_t spwm_register_index) const;
@@ -177,6 +197,19 @@ class SPWM_Config {
 // Return true when `panel_type` matches one of the built-in SPWM panel profiles.
 bool spwm_is_panel_type(const char *panel_type);
 
+// Return true when the selected panel profile has a rotating RGB register
+// block that --led-spwm-force-register can replace.
+bool spwm_panel_supports_forced_register(const char *panel_type);
+
+// Return the selected profile's type for a 1-based register slot.
+SPWM_Register_Slot_Type spwm_get_panel_register_slot_type(
+    const char *panel_type, size_t spwm_register_index);
+
+// Parse a non-empty comma-separated sequence of 16-bit C-style integer words.
+// Whitespace, including newlines, is allowed around values and commas.
+bool spwm_parse_forced_register_words(
+    const char *spwm_value, std::vector<uint16_t> *spwm_words);
+
 // Return true when this SPWM row-address transport advances rows through the
 // blank-clock scan waveform instead of direct A-E row outputs.
 bool spwm_row_address_type_uses_blank_clock(int spwm_row_address_type);
@@ -201,17 +234,23 @@ bool spwm_initialize_panel_type(const char *panel_type, int columns,
                                 int spwm_scan_rows,
                                 int spwm_data_layout,
                                 int spwm_register_config,
-                                int multiplexing);
+                                int multiplexing,
+                                const char *spwm_force_register,
+                                const char *const *spwm_force_registers,
+                                size_t spwm_force_register_count);
 
-// Load the selected panel profile into the runtime state, rebuild any
-// width-dependent register layout, and then apply environment overrides.
+// Load the selected panel profile into the runtime state, apply environment
+// overrides, rebuild its register layout, and apply forced register values.
 void spwm_configure_panel_type(const char *panel_type, int columns,
                                int panel_columns,
                                int spwm_row_address_type,
                                int spwm_scan_rows,
                                int spwm_data_layout,
                                int spwm_register_config,
-                               int multiplexing);
+                               int multiplexing,
+                               const char *spwm_force_register,
+                               const char *const *spwm_force_registers,
+                               size_t spwm_force_register_count);
 
 // Return the currently active panel settings after profile selection and
 // override handling.

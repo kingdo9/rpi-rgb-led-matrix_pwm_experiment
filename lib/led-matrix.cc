@@ -396,10 +396,17 @@ RGBMatrix::Options::Options() :
   limit_refresh_rate_hz(0),
 #endif
 #ifdef DISABLE_BUSY_WAITING
-    disable_busy_waiting(true)
+    disable_busy_waiting(true),
 #else
-    disable_busy_waiting(false)
+    disable_busy_waiting(false),
 #endif
+  spwm_force_register(NULL),
+  spwm_force_register1(NULL),
+  spwm_force_register2(NULL),
+  spwm_force_register3(NULL),
+  spwm_force_register4(NULL),
+  spwm_force_register5(NULL),
+  spwm_force_register6(NULL)
 {
   // Nothing to see here.
 }
@@ -435,6 +442,13 @@ static void PrintOptions(const RGBMatrix::Options &o) {
   P_STR(panel_type);
   P_INT(limit_refresh_rate_hz);
   P_BOOL(disable_busy_waiting);
+  P_STR(spwm_force_register);
+  P_STR(spwm_force_register1);
+  P_STR(spwm_force_register2);
+  P_STR(spwm_force_register3);
+  P_STR(spwm_force_register4);
+  P_STR(spwm_force_register5);
+  P_STR(spwm_force_register6);
 #undef P_INT
 #undef P_STR
 #undef P_BOOL
@@ -543,6 +557,19 @@ void RGBMatrix::Impl::ApplyNamedPixelMappers(const char *pixel_mapper_config,
 
 void RGBMatrix::Impl::SetGPIO(GPIO *io, bool start_thread) {
   if (io != NULL && io_ == NULL) {
+    const char *spwm_force_registers[] = {
+        params_.spwm_force_register1,
+        params_.spwm_force_register2,
+        params_.spwm_force_register3,
+        params_.spwm_force_register4,
+        params_.spwm_force_register5,
+        params_.spwm_force_register6,
+    };
+    static_assert(
+        sizeof(spwm_force_registers) / sizeof(spwm_force_registers[0]) ==
+            internal::SPWM_FORCE_REGISTER_COUNT,
+        "SPWM force-register option count is out of sync");
+
     io_ = io;
     Framebuffer::InitGPIO(io_, params_.rows, params_.parallel,
                           params_.panel_type,
@@ -557,7 +584,10 @@ void RGBMatrix::Impl::SetGPIO(GPIO *io, bool start_thread) {
                                   params_.spwm_scan_rows,
                                   params_.spwm_data_layout,
                                   params_.spwm_register_config,
-                                  params_.multiplexing);
+                                  params_.multiplexing,
+                                  params_.spwm_force_register,
+                                  spwm_force_registers,
+                                  internal::SPWM_FORCE_REGISTER_COUNT);
   }
   if (start_thread) {
     StartRefresh();
