@@ -31,18 +31,21 @@ SPWM panels currently supported by this tree:
   `--led-panel-type=sm16380sh --led-spwm-row-addr-type=1 --led-spwm-register-config=1`
 <br>
 
-- ICND1065L + shift-register row selection: \
-  `--led-panel-type=icnd1065l --led-rows=86 --led-cols=172 --led-spwm-row-addr-type=2 --led-spwm-scan=43`
+- ICND1065L + shift-register row selection:
+  - 172x86, 43S, default register config: \
+    `--led-panel-type=icnd1065l --led-rows=86 --led-cols=172 --led-spwm-row-addr-type=2 --led-spwm-scan=43 --led-spwm-register-config=0`
+  - 128x64, 32S, alternate register config: \
+    `--led-panel-type=icnd1065l --led-rows=64 --led-cols=128 --led-spwm-row-addr-type=2 --led-spwm-scan=32 --led-spwm-register-config=1`
   <br><br>
 
 Shared SPWM flags:
 
 - `--led-spwm-row-addr-type=<0..2>` selects the SPWM row-address transport.
-- `--led-spwm-register-config=<0..1>` selects the SPWM register payload variant where applicable, example SM16380SH test both if any display glitches occur.
+- `--led-spwm-register-config=<0..1>` selects the SPWM register payload variant where applicable. For ICND1065L, config 0 uses the 43S scan word and config 1 uses the 32S scan word; SM16380SH also provides an alternate register block for display glitches.
 - `--led-spwm-force-register1=<words>` through `--led-spwm-force-register6=<words>` override individual 1-based panel-profile register slots. 
 - `--led-spwm-force-register=<words>` override the panel profile's rotating RGB slot. Numbered overrides are applied afterward and win for the same slot.
 - `--led-spwm-scan=<rows>` overrides the SPWM scan-row count e.g values such as `43` for 1/43.
-- `--led-spwm-data-layout=<0..2>` controls full-height horizontal RGB lanes for row-address types 1/2. `0` uses the panel profile, `1` maps left/right to RGB2/RGB1, and `2` swaps those lanes. Layouts 1/2 require scan to equal rows, panel columns divisible by 32, and cannot be combined with `--led-multiplexing`. Each chained panel is split independently using `--led-cols`. The ICND1065L 86-row/43-scan example remains on layout 0's paired-row upload.
+- `--led-spwm-data-layout=<0..2>` controls full-height horizontal RGB lanes for row-address types 1/2. `0` uses the panel profile, `1` maps left/right to RGB2/RGB1, and `2` swaps those lanes. Layouts 1/2 require scan to equal rows, panel columns divisible by 32, and cannot be combined with `--led-multiplexing`. Each chained panel is split independently using `--led-cols`. The ICND1065L 86-row/43-scan and 64-row/32-scan examples remain on layout 0's paired-row upload.
 
 [SPWM Tuning Guide](./spwm.md)
 

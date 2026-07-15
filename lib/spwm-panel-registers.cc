@@ -372,9 +372,49 @@ static const SPWM_Register_Config_Entry
     spwm_make_fixed_register_config_entry(5, 0x0155),
 };
 
+// CONFIG1 keeps the proven CONFIG0 tuning but programs the ICND1065L for
+// 1/32 scan. RegValue[0] bits 5:0 contain scan_count - 1, so the 1/43 word
+// 0x026a becomes 0x025f for 1/32 in each RGB sequence.
+static const uint16_t SPWM_ICND1065L_REGISTER_CONFIG1_BLOCK3_SEQ_R[] = {
+    0x0000, 0x025f, 0x0322, 0x0412, 0x0500, 0x0601, 0x0712, 0x0c10,
+    0x0d02, 0x0e84, 0x0f01, 0x1040, 0x1127, 0x1800, 0x1926, 0x1c60,
+    0x1d02, 0x1e71, 0x2040, 0x2101, 0x2380, 0x74a0,
+};
+
+static const uint16_t SPWM_ICND1065L_REGISTER_CONFIG1_BLOCK3_SEQ_G[] = {
+    0x0000, 0x025f, 0x0322, 0x0412, 0x0500, 0x0601, 0x0712, 0x0c10,
+    0x0d04, 0x0e84, 0x0f01, 0x1040, 0x1127, 0x1800, 0x1908, 0x1c60,
+    0x1d02, 0x1e92, 0x2060, 0x2101, 0x2305, 0x74a0,
+};
+
+static const uint16_t SPWM_ICND1065L_REGISTER_CONFIG1_BLOCK3_SEQ_B[] = {
+    0x0000, 0x025f, 0x0322, 0x0412, 0x0500, 0x0601, 0x0712, 0x0c10,
+    0x0d03, 0x0e84, 0x0f11, 0x1040, 0x1127, 0x1800, 0x190a, 0x1c60,
+    0x1d02, 0x1eb5, 0x2060, 0x2101, 0x2300, 0x74a0,
+};
+
+static const SPWM_RGB_Word_Sequences
+    SPWM_ICND1065L_REGISTER_CONFIG1_BLOCK3_SEQUENCES = {
+    spwm_make_word_sequence(SPWM_ICND1065L_REGISTER_CONFIG1_BLOCK3_SEQ_R),
+    spwm_make_word_sequence(SPWM_ICND1065L_REGISTER_CONFIG1_BLOCK3_SEQ_G),
+    spwm_make_word_sequence(SPWM_ICND1065L_REGISTER_CONFIG1_BLOCK3_SEQ_B),
+};
+
+static const SPWM_Register_Config_Entry
+    SPWM_ICND1065L_REGISTER_CONFIG1_ENTRIES[] = {
+    spwm_make_fixed_register_config_entry(1, 0x00AA),
+    spwm_make_fixed_register_config_entry(2, 0x01AA),
+    spwm_make_rgb_register_config_entry(
+        3, SPWM_ICND1065L_REGISTER_CONFIG1_BLOCK3_SEQUENCES),
+    spwm_make_fixed_register_config_entry(4, 0x0055),
+    spwm_make_fixed_register_config_entry(5, 0x0155),
+};
+
 static const SPWM_Register_Config SPWM_ICND1065L_REGISTER_CONFIGS[] = {
     {0, spwm_make_register_config_entries(
             SPWM_ICND1065L_REGISTER_CONFIG0_ENTRIES)},
+    {1, spwm_make_register_config_entries(
+            SPWM_ICND1065L_REGISTER_CONFIG1_ENTRIES)},
 };
 
 // -------------------------------------------------------------------------------------------------

@@ -36,7 +36,7 @@ The main parameter to adjust for performance tweaking is adding the below to the
 
 NOTE **--led-show-refresh** may cause some glitches, so disable this once you have finished testing. Seen on SM16380SH
 
-NOTE **--led-spwm-register-config** | Some drivers like the SM16380SH an alternative register block for 07 is added. This can help with timing on different Pi models. So test both =1 and =0 if you notice any display glitches.
+NOTE **--led-spwm-register-config** | For ICND1065L, config 0 programs the 43S scan word and config 1 programs the 32S scan word while preserving the remaining profile tuning. Some drivers such as SM16380SH also provide an alternate register block for display glitches.
 
 NOTE **--led-spwm-force-register1** through **--led-spwm-force-register6** | Each option overrides one 1-based panel-profile register slot. A fixed slot requires exactly one 16-bit word, which is repeated across the panel's driver chips. A rotating RGB slot accepts a comma-separated list; one word is sent per frame to R/G/B, and the list wraps at the end. An omitted option keeps the slot selected by the panel profile and `--led-spwm-register-config`.
 
@@ -96,12 +96,22 @@ Pi 4 - FM6363 / DP32020A 128x64 Example
 
     taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D8 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=5 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=fm6363 --led-spwm-row-addr-type=1
 
-Pi 4 - ICND1065L 172x86 Example
+Pi 4 - ICND1065L 172x86 43S Example
 
-    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D8 --led-rows=86 --led-cols=172 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=5 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=icnd1065l --led-spwm-row-addr-type=2 --led-spwm-scan=43
+    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D8 --led-rows=86 --led-cols=172 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=5 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=icnd1065l --led-spwm-row-addr-type=2 --led-spwm-scan=43 --led-spwm-register-config=0
 
 This ICND1065L example uploads paired vertical rows because scan 43 is half of
 the 86-row panel height. Full-height data layouts 1/2 do not apply to it.
+
+Pi 4 - ICND1065L 128x64 32S Example
+
+    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D8 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=5 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=icnd1065l --led-spwm-row-addr-type=2 --led-spwm-scan=32 --led-spwm-register-config=1
+
+This example keeps the type-2 shift-register row-selector waveform used by the
+172x86 example; register config 1 changes the ICND1065L scan word, not the
+row-address transport. Modules using a direct Decode138/DP32019B row decoder
+require `--led-spwm-row-addr-type=0` instead. The 64-row/32-scan geometry uses
+the normal paired-row upload, so full-height data layouts 1/2 do not apply.
 
 Pi 4 - SM16380SH 128x64 Example
 
