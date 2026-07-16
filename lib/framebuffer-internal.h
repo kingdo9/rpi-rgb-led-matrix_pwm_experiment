@@ -117,6 +117,7 @@ public:
                                const char *const *spwm_force_registers,
                                size_t spwm_force_register_count);
   // Reset internal static globals so InitGPIO() can re-run with new params.
+  // No framebuffer refresh thread may be active while these objects are freed.
   static void ResetGlobals();
 
   // Set PWM bits used for output. Default is 11, but if you only deal with

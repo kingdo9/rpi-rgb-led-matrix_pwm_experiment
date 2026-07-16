@@ -2,52 +2,53 @@ rpi-rgb-led-matrix - SPWM Expeimental Support
 ==================================================
 
 These newer panel types currently have limited and experimental support.
-SPWM panels currently supported by this tree:
+SPWM panels below currently supported by this fork:
 
-- FM6373 + DP32019B direct row selection: \
+For test examples on how to run and how to obtain your optimum register values\
+Visit - [SPWM Tuning Guide](./spwm.md)
+
+- FM6373 + DP32019B direct row selection:\
   `--led-panel-type=fm6373 --led-spwm-row-addr-type=0`
 <br>
 
-- FM6373 + DP32019B direct row selection - Parallel (Active3 Hat) - Two Displays Side By Side: \
+- FM6373 + DP32019B direct row selection - Parallel (Active3 Hat) - Two Displays Side By Side:\
   `--led-panel-type=fm6373 --led-spwm-row-addr-type=0 --led-parallel=2 --led-pixel-mapper="StackToRow"`
 <br>
 
-- FM6373 + DP32020B 64S - shift-register row selection - alternate register config: \
-  `--led-panel-type=fm6373 --led-rows=64 --led-cols=128 --led-spwm-row-addr-type=1 --led-spwm-scan=64 --led-spwm-data-layout=1 --led-spwm-register-config=1`
+- FM6373 + DP32020B 64S - shift-register row selection\
+  `--led-panel-type=fm6373 --led-rows=64 --led-cols=128 --led-spwm-row-addr-type=1 --led-spwm-scan=64 --led-spwm-data-layout=1 --led-spwm-register-config=2`
 <br>
 
 - FM6353: \
   `--led-panel-type=fm6353 --led-spwm-row-addr-type=1`
 <br>
 
-- FM6363 + DP32020A shift-register row selection: \
+- FM6363 + DP32020A shift-register row selection:\
   `--led-panel-type=fm6363 --led-spwm-row-addr-type=1`
 <br>
 
-- SM16380SH \
+- SM16380SH\
   `--led-panel-type=sm16380sh --led-spwm-row-addr-type=0`\
   `--led-panel-type=sm16380sh --led-spwm-row-addr-type=1`\
   `--led-panel-type=sm16380sh --led-spwm-row-addr-type=1 --led-spwm-register-config=0`\
-  `--led-panel-type=sm16380sh --led-spwm-row-addr-type=1 --led-spwm-register-config=1`
+  `--led-panel-type=sm16380sh --led-spwm-row-addr-type=1 --led-spwm-register-config=2`
 <br>
 
 - ICND1065L + shift-register row selection:
-  - 172x86, 43S, default register config: \
+  - 172x86, 43S\
     `--led-panel-type=icnd1065l --led-rows=86 --led-cols=172 --led-spwm-row-addr-type=2 --led-spwm-scan=43 --led-spwm-register-config=0`
-  - 128x64, 32S, alternate register config: \
-    `--led-panel-type=icnd1065l --led-rows=64 --led-cols=128 --led-spwm-row-addr-type=2 --led-spwm-scan=32 --led-spwm-register-config=1`
+  - 128x64, 32S\
+    `--led-panel-type=icnd1065l --led-rows=64 --led-cols=128 --led-spwm-row-addr-type=2 --led-spwm-scan=32 --led-spwm-register-config=2`
   <br><br>
 
-Shared SPWM flags:
+### Shared SPWM flags:
 
 - `--led-spwm-row-addr-type=<0..2>` selects the SPWM row-address transport.
-- `--led-spwm-register-config=<0..1>` selects the SPWM register payload variant where applicable. For ICND1065L, config 0 uses the 43S scan word and config 1 uses the 32S scan word; SM16380SH also provides an alternate register block for display glitches.
-- `--led-spwm-force-register1=<words>` through `--led-spwm-force-register6=<words>` override individual 1-based panel-profile register slots. 
-- `--led-spwm-force-register=<words>` override the panel profile's rotating RGB slot. Numbered overrides are applied afterward and win for the same slot.
+- `--led-spwm-register-config=<0|1..N>` selects the register payload. `0` use the main config; a positive value selects the identically numbered generated `regtypeN` profile used by Demo 15. The available upper limit depends on `--led-panel-type`.
 - `--led-spwm-scan=<rows>` overrides the SPWM scan-row count e.g values such as `43` for 1/43.
+- `--led-spwm-force-register1=<words|RGB>` through `--led-spwm-force-register6=<words|RGB>` override individual 1-based panel-profile register slots. Fixed slots accept one shared word or distinct physical values such as `R:0x1234;G:0x2345;B:0x3456`. Rotating slots accept quoted equal-length physical-channel lists such as `R:...;G:...;B:...`; one labelled value is copied to all channels.
+- `--led-spwm-force-register=<words|RGB>` overrides the panel profile's rotating RGB slot with the same shared or channel-labelled syntax. Numbered overrides are applied afterward and win for the same slot.
 - `--led-spwm-data-layout=<0..2>` controls full-height horizontal RGB lanes for row-address types 1/2. `0` uses the panel profile, `1` maps left/right to RGB2/RGB1, and `2` swaps those lanes. Layouts 1/2 require scan to equal rows, panel columns divisible by 32, and cannot be combined with `--led-multiplexing`. Each chained panel is split independently using `--led-cols`. The ICND1065L 86-row/43-scan and 64-row/32-scan examples remain on layout 0's paired-row upload.
-
-[SPWM Tuning Guide](./spwm.md)
 
 SPWM panel discussion and resources - https://github.com/hzeller/rpi-rgb-led-matrix/issues/1866
 
@@ -423,12 +424,12 @@ two chained panels, so then you'd use
 --led-spwm-row-addr-type=<0..2>: SPWM row select. 0 = direct A-E row flow; 1 = shift-register blank-clock A/C row-select; 2 = shift-register blank-clock A+B with wrap-C row-select (Default: 0).
 --led-spwm-scan=<rows>: SPWM-only scan-row override e.g 43 for 1/43 (Default: 0).
 --led-spwm-data-layout=<0..2>: SPWM data layout. 0 = panel default; 1 = full-height left on RGB2/right on RGB1; 2 = full-height left on RGB1/right on RGB2. Cannot be combined with --led-multiplexing (Default: 0).
---led-spwm-register-config=<-1..1>: SPWM register payload variant. -1 = automatic, 0 = default, 1 = alternate (Default: -1).
---led-spwm-force-register1=<words> ... --led-spwm-force-register6=<words>: Override individual 1-based panel-profile register slots. Fixed slots require one word; rotating RGB slots accept a wrapping sequence. Omitted slots keep their panel defaults; selecting a slot that the panel does not provide is an error.
---led-spwm-force-register=<words>: Backward-compatible shortcut for the profile's rotating RGB slot, currently register 3 where present. Numbered overrides take precedence (Default: unset).
+--led-spwm-register-config=<0|1..N>: SPWM register profile. 0 = main; N = generated regtypeN (Default: 0).
+--led-spwm-force-register1=<words|RGB> ... --led-spwm-force-register6=<words|RGB>: Override individual 1-based panel-profile register slots. Fixed slots accept one shared word or R:<word>;G:<word>;B:<word>. Rotating RGB slots accept a shared wrapping sequence or quoted equal-length R:<words>;G:<words>;B:<words> lists. One labelled value is copied to all channels. Omitted slots keep their panel defaults; selecting a slot that the panel does not provide is an error.
+--led-spwm-force-register=<words|RGB>: Backward-compatible shortcut for the profile's rotating RGB slot, currently register 3 where present. It accepts the same shared or RGB-labelled syntax. Numbered overrides take precedence (Default: unset).
 ```
 
-For SPWM panels, `--led-panel-type` selects the panel profile, `--led-spwm-row-addr-type` selects the SPWM row-address path, `--led-spwm-scan` is only needed when the shift-register path needs a non-default scan count, `--led-spwm-data-layout` selects a full-height horizontal lane order, and `--led-spwm-register-config` can override panel-specific register variants. Forced values are layered on that selected config: the unnumbered rotating-RGB shortcut is applied first, then numbered slot overrides are applied and win for the same slot. Slots without a force option retain the selected config.
+For SPWM panels, `--led-panel-type` selects the panel profile, `--led-spwm-row-addr-type` selects the SPWM row-address path, `--led-spwm-scan` is only needed when the shift-register path needs a non-default scan count, `--led-spwm-data-layout` selects a full-height horizontal lane order, and `--led-spwm-register-config=N` selects generated `regtypeN` (`0` keeps the main config). Forced values are layered on that selected config: the unnumbered rotating-RGB shortcut is applied first, then numbered slot overrides are applied and win for the same slot. Slots without a force option retain the selected config.
 
 This option is useful for certain 64x64 or 32x16 panels. For 64x64 panels,
 that only have an `A` and `B` address line, you'd use `--led-row-addr-type=1`.

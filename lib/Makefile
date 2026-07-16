@@ -195,6 +195,14 @@ led-matrix.o: led-matrix.cc $(INCDIR)/led-matrix.h
 thread.o : thread.cc $(INCDIR)/thread.h
 framebuffer.o: framebuffer.cc framebuffer-internal.h
 graphics.o: graphics.cc utf8-internal.h
+options-initialize.o: options-initialize.cc spwm-panel-registers.h
+spwm-panel-registers.o: \
+	spwm-panel-registers.cc spwm-panel-registers.h \
+	spwm/registertest/fm6353/fm6353-register-profiles.generated.h \
+	spwm/registertest/fm6363/fm6363-register-profiles.generated.h \
+	spwm/registertest/fm6373/fm6373-register-profiles.generated.h \
+	spwm/registertest/icnd1065l/icnd1065l-register-profiles.generated.h \
+	spwm/registertest/sm16380sh/sm16380sh-register-profiles.generated.h
 
 %.o : %.cc compiler-flags
 	$(CXX) -I$(INCDIR) $(CXXFLAGS) -c -o $@ $<

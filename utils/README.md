@@ -32,16 +32,16 @@ the [toplevel readme](../README.md#changing-parameters-via-command-line-flags)
  --led-spwm-row-addr-type=<0..2>: SPWM-only row-address transport. 0 = direct A-E row flow; 1 = shift-register blank-clock A/C row-select; 2 = shift-register blank-clock A+B with wrap-C row-select (Default: 0).
  --led-spwm-scan=<rows>    : SPWM-only scan-row override e.g 43 for 1/43 (Default: 0)
  --led-spwm-data-layout=<0..2>: SPWM data layout. 0 = panel default; 1 = full-height left on RGB2/right on RGB1; 2 = full-height left on RGB1/right on RGB2. Cannot be combined with --led-multiplexing (Default: 0)
- --led-spwm-register-config=<-1..1>: SPWM register payload variant. -1 = automatic, 0 = default, 1 = alternate (Default: -1)
- --led-spwm-force-register1=<words> ... --led-spwm-force-register6=<words>: Override individual 1-based panel-profile register slots. Fixed slots require one word; rotating RGB slots accept a wrapping sequence. Omitted slots keep their panel defaults; selecting an absent slot is an error.
- --led-spwm-force-register=<words>: Backward-compatible shortcut for the profile's rotating RGB slot, currently register 3 where present. Numbered overrides take precedence (Default: unset)
+ --led-spwm-register-config=<-1|0|1..N>: SPWM register profile. -1 or 0 = built-in main; N = generated regtypeN (Default: -1)
+ --led-spwm-force-register1=<words|RGB> ... --led-spwm-force-register6=<words|RGB>: Override individual 1-based panel-profile register slots. Fixed slots accept one shared word or R:<word>;G:<word>;B:<word>. Rotating RGB slots accept a shared list or quoted equal-length R:<words>;G:<words>;B:<words> lists. One labelled value is copied to all channels. Omitted slots keep their panel defaults; selecting an absent slot is an error.
+ --led-spwm-force-register=<words|RGB>: Backward-compatible shortcut for the profile's rotating RGB slot, currently register 3 where present. It accepts the same shared or RGB-labelled syntax. Numbered overrides take precedence (Default: unset)
  --led-show-refresh        : Show refresh rate.
  --led-inverse             : Switch if your matrix has inverse colors on.
  --led-rgb-sequence        : Switch if your matrix has led colors swapped (Default: "RGB")
  --led-pwm-lsb-nanoseconds : PWM Nanoseconds for LSB (Default: 130)
  --led-pwm-dither-bits=<0..2> : Time dithering of lower bits (Default: 0)
  --led-no-hardware-pulse   : Don't use hardware pin-pulse generation.
- --led-panel-type=<name>   : Needed to initialize special panels. Supported: 'FM6126A', 'FM6127', 'FM6373', 'ICND1065L', 'SM16380SH', 'FM6363'
+ --led-panel-type=<name>   : Needed to initialize special panels. Supported: 'FM6126A', 'FM6127', 'FM6373', 'ICND1065L', 'SM16380SH', 'FM6363', 'FM6353'
  --led-slowdown-gpio=<0..60>: Slowdown GPIO. Needed for faster Pis/slower panels (Default: 1).
  --led-daemon              : Make the process run in the background as daemon.
  --led-no-drop-privs       : Don't drop privileges from 'root' after initializing the hardware.

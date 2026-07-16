@@ -5,10 +5,12 @@
 #include "framebuffer-internal.h"
 
 #include <algorithm>
+#include <atomic>
 #include <ctype.h>
 #include <errno.h>
 #include <limits.h>
 #include <stdlib.h>
+#include <string>
 #include <time.h>
 #include <unistd.h>
 
@@ -25,6 +27,7 @@ SPWM_Config::SPWM_Config(size_t spwm_register_count,
   register_words_.resize(spwm_register_count);
   register_data_.resize(spwm_register_count);
   rgb_registers_.resize(spwm_register_count);
+  fixed_rgb_registers_.resize(spwm_register_count);
 
   for (size_t spwm_register_index = 0;
        spwm_register_index < spwm_register_count;
@@ -61,6 +64,7 @@ void SPWM_Config::spwm_add_register(size_t spwm_register_index,
   }
 
   const size_t spwm_index = spwm_register_index - 1;
+  fixed_rgb_registers_[spwm_index].present = false;
   register_words_[spwm_index] = spwm_expand_words_for_register(spwm_words);
 
   SPWM_Register_Data spwm_register_data = {
@@ -93,7 +97,7 @@ void SPWM_Config::spwm_add_rgb_register(
 }
 
 // Replace one existing slot while preserving its profile-selected type and
-// timing. Fixed slots accept one word; RGB slots keep rotating through a list.
+// timing. This shared-value form applies the same word(s) to every RGB lane.
 bool SPWM_Config::spwm_force_register_words(
     size_t spwm_register_index,
     const std::vector<uint16_t> &spwm_words) {
@@ -103,15 +107,10 @@ bool SPWM_Config::spwm_force_register_words(
   }
 
   if (spwm_has_rgb_register(spwm_register_index)) {
-    SPWM_RGB_Register &spwm_rgb_register =
-        rgb_registers_[spwm_register_index - 1];
-    for (std::vector<uint16_t> &spwm_channel_sequence :
-         spwm_rgb_register.channel_sequences) {
-      spwm_channel_sequence = spwm_words;
-    }
-    spwm_rgb_register.sequence_index = 0;
-    spwm_rgb_register.sequence_length = spwm_words.size();
-    return true;
+    const std::array<std::vector<uint16_t>, 3> spwm_channel_sequences = {
+        spwm_words, spwm_words, spwm_words};
+    return spwm_force_register_rgb_words(spwm_register_index,
+                                         spwm_channel_sequences);
   }
 
   const SPWM_Register_Data &spwm_register_data =
@@ -126,18 +125,96 @@ bool SPWM_Config::spwm_force_register_words(
   return true;
 }
 
+// Replace one rotating slot with equal-length physical-channel sequences and
+// restart its per-init cursor from the first word.
+bool SPWM_Config::spwm_force_register_rgb_words(
+    size_t spwm_register_index,
+    const std::array<std::vector<uint16_t>, 3> &spwm_channel_sequences) {
+  if (!spwm_has_rgb_register(spwm_register_index) ||
+      spwm_channel_sequences[0].empty() ||
+      spwm_channel_sequences[0].size() != spwm_channel_sequences[1].size() ||
+      spwm_channel_sequences[0].size() != spwm_channel_sequences[2].size()) {
+    return false;
+  }
+
+  SPWM_RGB_Register &spwm_rgb_register =
+      rgb_registers_[spwm_register_index - 1];
+  spwm_rgb_register.channel_sequences = spwm_channel_sequences;
+  spwm_rgb_register.sequence_index = 0;
+  spwm_rgb_register.sequence_length = spwm_channel_sequences[0].size();
+  return true;
+}
+
+// Replace one fixed register with distinct physical values on the R/G/B data
+// lanes. The underlying fixed payload remains in place to retain its repeat
+// count and per-register latch timing.
+bool SPWM_Config::spwm_force_fixed_register_rgb_words(
+    size_t spwm_register_index, const uint16_t spwm_channel_words[3]) {
+  if (spwm_channel_words == nullptr || spwm_register_index == 0 ||
+      spwm_register_index > register_data_.size() ||
+      spwm_has_rgb_register(spwm_register_index)) {
+    return false;
+  }
+
+  const SPWM_Register_Data &spwm_register_data =
+      register_data_[spwm_register_index - 1];
+  if (spwm_register_data.words == nullptr ||
+      spwm_register_data.word_count == 0) {
+    return false;
+  }
+
+  SPWM_Fixed_RGB_Register &spwm_fixed_register =
+      fixed_rgb_registers_[spwm_register_index - 1];
+  spwm_fixed_register.present = true;
+  spwm_fixed_register.frame = {
+      spwm_channel_words[0], spwm_channel_words[1], spwm_channel_words[2]};
+  return true;
+}
+
+// Read the optional physical-channel sidecar used by diagnostic fixed slots.
+bool SPWM_Config::spwm_get_fixed_register_rgb_frame(
+    size_t spwm_register_index, SPWM_RGB_Frame *spwm_rgb_frame) const {
+  if (spwm_rgb_frame == nullptr || spwm_register_index == 0 ||
+      spwm_register_index > fixed_rgb_registers_.size()) {
+    return false;
+  }
+
+  const SPWM_Fixed_RGB_Register &spwm_fixed_register =
+      fixed_rgb_registers_[spwm_register_index - 1];
+  if (!spwm_fixed_register.present) return false;
+
+  *spwm_rgb_frame = spwm_fixed_register.frame;
+  return true;
+}
+
 // Replace all rotating RGB payloads with the same user-supplied sequence for
 // each color channel. Fixed register slots and per-slot timing stay unchanged.
 bool SPWM_Config::spwm_force_rgb_register_words(
     const std::vector<uint16_t> &spwm_words) {
   if (spwm_words.empty()) return false;
 
+  const std::array<std::vector<uint16_t>, 3> spwm_channel_sequences = {
+      spwm_words, spwm_words, spwm_words};
+  return spwm_force_rgb_register_words(spwm_channel_sequences);
+}
+
+// Apply distinct physical-channel sequences to every rotating slot in the
+// active profile; current profiles contain one such slot.
+bool SPWM_Config::spwm_force_rgb_register_words(
+    const std::array<std::vector<uint16_t>, 3> &spwm_channel_sequences) {
+  if (spwm_channel_sequences[0].empty() ||
+      spwm_channel_sequences[0].size() != spwm_channel_sequences[1].size() ||
+      spwm_channel_sequences[0].size() != spwm_channel_sequences[2].size()) {
+    return false;
+  }
+
   bool spwm_forced_register = false;
   for (size_t spwm_register_index = 1;
        spwm_register_index <= rgb_registers_.size();
        ++spwm_register_index) {
     if (!spwm_has_rgb_register(spwm_register_index)) continue;
-    if (spwm_force_register_words(spwm_register_index, spwm_words)) {
+    if (spwm_force_register_rgb_words(spwm_register_index,
+                                      spwm_channel_sequences)) {
       spwm_forced_register = true;
     }
   }
@@ -243,11 +320,195 @@ bool spwm_parse_forced_register_words(
   return false;
 }
 
+// Parse the shared legacy form or the R:/G:/B: channel-labelled form without
+// modifying the destination unless the complete value is valid.
+bool spwm_parse_forced_rgb_register_words(
+    const char *spwm_value,
+    std::array<std::vector<uint16_t>, 3> *spwm_channel_sequences) {
+  if (spwm_value == nullptr || spwm_channel_sequences == nullptr) return false;
+
+  // Preserve the original unlabelled-list syntax as the fast path. A single
+  // labelled channel is also shared; otherwise all R/G/B labels are required
+  // and must contain the same number of rotating words.
+  std::vector<uint16_t> spwm_shared_words;
+  if (spwm_parse_forced_register_words(spwm_value, &spwm_shared_words)) {
+    *spwm_channel_sequences = {
+        spwm_shared_words, spwm_shared_words, spwm_shared_words};
+    return true;
+  }
+
+  std::array<std::vector<uint16_t>, 3> spwm_parsed_channels;
+  bool spwm_channel_present[3] = {false, false, false};
+  size_t spwm_channel_count = 0;
+  const char *spwm_cursor = spwm_value;
+
+  while (*spwm_cursor != '\0') {
+    while (isspace(static_cast<unsigned char>(*spwm_cursor))) ++spwm_cursor;
+    if (*spwm_cursor == '\0') return false;
+
+    size_t spwm_channel_index = 0;
+    switch (tolower(static_cast<unsigned char>(*spwm_cursor))) {
+      case 'r':
+        spwm_channel_index = 0;
+        break;
+      case 'g':
+        spwm_channel_index = 1;
+        break;
+      case 'b':
+        spwm_channel_index = 2;
+        break;
+      default:
+        return false;
+    }
+    ++spwm_cursor;
+    while (isspace(static_cast<unsigned char>(*spwm_cursor))) ++spwm_cursor;
+    if (*spwm_cursor != ':' || spwm_channel_present[spwm_channel_index]) {
+      return false;
+    }
+    ++spwm_cursor;
+
+    const char *spwm_sequence_start = spwm_cursor;
+    while (*spwm_cursor != '\0' && *spwm_cursor != ';') ++spwm_cursor;
+    const std::string spwm_sequence(
+        spwm_sequence_start,
+        static_cast<size_t>(spwm_cursor - spwm_sequence_start));
+    if (!spwm_parse_forced_register_words(
+            spwm_sequence.c_str(),
+            &spwm_parsed_channels[spwm_channel_index])) {
+      return false;
+    }
+
+    spwm_channel_present[spwm_channel_index] = true;
+    ++spwm_channel_count;
+    if (*spwm_cursor == ';') {
+      ++spwm_cursor;
+      const char *spwm_next_channel = spwm_cursor;
+      while (isspace(static_cast<unsigned char>(*spwm_next_channel))) {
+        ++spwm_next_channel;
+      }
+      if (*spwm_next_channel == '\0') return false;
+    }
+  }
+
+  if (spwm_channel_count == 1) {
+    size_t spwm_source_channel = 0;
+    while (!spwm_channel_present[spwm_source_channel]) ++spwm_source_channel;
+    for (size_t spwm_channel_index = 0; spwm_channel_index < 3;
+         ++spwm_channel_index) {
+      spwm_parsed_channels[spwm_channel_index] =
+          spwm_parsed_channels[spwm_source_channel];
+    }
+  } else if (spwm_channel_count != 3 ||
+             spwm_parsed_channels[0].size() !=
+                 spwm_parsed_channels[1].size() ||
+             spwm_parsed_channels[0].size() !=
+                 spwm_parsed_channels[2].size()) {
+    return false;
+  }
+
+  *spwm_channel_sequences = spwm_parsed_channels;
+  return true;
+}
+
 namespace {
 
 // ------------------------------
 // Runtime state and small helpers
 // ------------------------------
+std::atomic<const SPWM_RGB_Register_Profile_View *>
+    spwm_pending_rgb_register_profile(nullptr);
+std::atomic<const SPWM_RGB_Register_Profile_View *>
+    spwm_last_emitted_rgb_register_profile(nullptr);
+std::atomic<const SPWM_RGB_Register_Profile_View *>
+    spwm_last_rejected_rgb_register_profile(nullptr);
+// These two values are only read or written by the refresh thread.
+const SPWM_RGB_Register_Profile_View *
+    spwm_rgb_register_profile_being_emitted = nullptr;
+size_t spwm_rgb_register_profile_words_remaining = 0;
+
+std::atomic<const SPWM_Fixed_Register_Profile_View *>
+    spwm_pending_fixed_register_profile(nullptr);
+std::atomic<const SPWM_Fixed_Register_Profile_View *>
+    spwm_last_emitted_fixed_register_profile(nullptr);
+std::atomic<const SPWM_Fixed_Register_Profile_View *>
+    spwm_last_rejected_fixed_register_profile(nullptr);
+// These values are only read or written by the refresh thread.
+const SPWM_Fixed_Register_Profile_View *
+    spwm_fixed_register_profile_being_emitted = nullptr;
+uint32_t spwm_fixed_register_profile_remaining_mask = 0;
+
+// These validators check only structural shape; callers provide the
+// process-lifetime backing storage required by the public view contract.
+// Whether a requested slot exists and has the expected type is checked after
+// the refresh thread consumes the request against the active runtime config.
+bool spwm_is_valid_rgb_register_profile(
+    const SPWM_RGB_Register_Profile_View *spwm_profile) {
+  if (spwm_profile == nullptr || spwm_profile->name == nullptr ||
+      spwm_profile->register_index == 0) {
+    return false;
+  }
+
+  const size_t spwm_word_count = spwm_profile->channel_word_counts[0];
+  if (spwm_word_count == 0) return false;
+
+  for (size_t spwm_channel = 0; spwm_channel < 3; ++spwm_channel) {
+    if (spwm_profile->channel_words[spwm_channel] == nullptr ||
+        spwm_profile->channel_word_counts[spwm_channel] != spwm_word_count) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool spwm_is_valid_fixed_register_profile(
+    const SPWM_Fixed_Register_Profile_View *spwm_profile) {
+  if (spwm_profile == nullptr || spwm_profile->name == nullptr ||
+      spwm_profile->entries == nullptr || spwm_profile->entry_count == 0 ||
+      spwm_profile->entry_count > SPWM_FORCE_REGISTER_COUNT) {
+    return false;
+  }
+
+  uint32_t spwm_register_mask = 0;
+  for (size_t spwm_entry_index = 0;
+       spwm_entry_index < spwm_profile->entry_count;
+       ++spwm_entry_index) {
+    const size_t spwm_register_index =
+        spwm_profile->entries[spwm_entry_index].register_index;
+    if (spwm_register_index == 0 ||
+        spwm_register_index > SPWM_FORCE_REGISTER_COUNT) {
+      return false;
+    }
+
+    const uint32_t spwm_register_bit =
+        static_cast<uint32_t>(1u << (spwm_register_index - 1));
+    if ((spwm_register_mask & spwm_register_bit) != 0) return false;
+    spwm_register_mask |= spwm_register_bit;
+  }
+  return true;
+}
+
+// Clear the asynchronous diagnostic hand-off at SPWM setup/teardown. The
+// refresh thread must be stopped before this resets its non-atomic progress
+// fields.
+void spwm_reset_register_profile_state() {
+  spwm_pending_rgb_register_profile.store(nullptr, std::memory_order_release);
+  spwm_last_emitted_rgb_register_profile.store(
+      nullptr, std::memory_order_release);
+  spwm_last_rejected_rgb_register_profile.store(
+      nullptr, std::memory_order_release);
+  spwm_rgb_register_profile_being_emitted = nullptr;
+  spwm_rgb_register_profile_words_remaining = 0;
+
+  spwm_pending_fixed_register_profile.store(nullptr,
+                                             std::memory_order_release);
+  spwm_last_emitted_fixed_register_profile.store(
+      nullptr, std::memory_order_release);
+  spwm_last_rejected_fixed_register_profile.store(
+      nullptr, std::memory_order_release);
+  spwm_fixed_register_profile_being_emitted = nullptr;
+  spwm_fixed_register_profile_remaining_mask = 0;
+}
+
 typedef bool (*SPWM_Env_Int_Validator)(int value);
 
 enum SPWM_Auto_Tune_Section {
@@ -422,6 +683,124 @@ SPWM_Runtime_State &spwm_get_runtime_state() {
   return spwm_runtime_state;
 }
 
+// Confirm that a diagnostic slot will actually be visited by the active init
+// script. A configured-but-unemitted slot could otherwise leave Demo 15 waiting
+// forever for a completion mask that can never clear.
+bool spwm_init_sequence_emits_register(
+    const SPWM_Init_Sequence &spwm_init_sequence,
+    SPWM_Init_Step_Type spwm_step_type, size_t spwm_register_index) {
+  if (spwm_init_sequence.steps == nullptr || spwm_register_index == 0) {
+    return false;
+  }
+  for (size_t spwm_step_index = 0;
+       spwm_step_index < spwm_init_sequence.step_count;
+       ++spwm_step_index) {
+    const SPWM_Init_Step &spwm_step =
+        spwm_init_sequence.steps[spwm_step_index];
+    if (spwm_step.type == spwm_step_type &&
+        spwm_step.value == spwm_register_index) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Consume a pending diagnostic profile on the refresh thread so the active
+// register vectors are never modified while an init sequence is reading them.
+void spwm_apply_pending_rgb_register_profile() {
+  const SPWM_RGB_Register_Profile_View *spwm_profile =
+      spwm_pending_rgb_register_profile.exchange(nullptr,
+                                                 std::memory_order_acq_rel);
+  if (spwm_profile == nullptr) return;
+  if (!spwm_is_valid_rgb_register_profile(spwm_profile)) {
+    spwm_last_rejected_rgb_register_profile.store(
+        spwm_profile, std::memory_order_release);
+    return;
+  }
+
+  SPWM_Runtime_State &spwm_runtime_state = spwm_get_runtime_state();
+  SPWM_Config &spwm_config = spwm_runtime_state.config;
+  if (!spwm_config.spwm_has_rgb_register(spwm_profile->register_index) ||
+      !spwm_init_sequence_emits_register(
+          spwm_runtime_state.init_sequence, SPWM_INIT_STEP_RGB_REGISTER,
+          spwm_profile->register_index)) {
+    spwm_last_rejected_rgb_register_profile.store(
+        spwm_profile, std::memory_order_release);
+    return;
+  }
+
+  std::array<std::vector<uint16_t>, 3> spwm_channel_sequences;
+  for (size_t spwm_channel = 0; spwm_channel < 3; ++spwm_channel) {
+    const uint16_t *spwm_words = spwm_profile->channel_words[spwm_channel];
+    spwm_channel_sequences[spwm_channel].assign(
+        spwm_words,
+        spwm_words + spwm_profile->channel_word_counts[spwm_channel]);
+  }
+
+  const SPWM_Register_Timing spwm_timing =
+      spwm_config.spwm_get_register_timing(spwm_profile->register_index);
+  spwm_config.spwm_add_rgb_register(spwm_profile->register_index,
+                                    spwm_channel_sequences, spwm_timing);
+  spwm_rgb_register_profile_being_emitted = spwm_profile;
+  spwm_rgb_register_profile_words_remaining =
+      spwm_profile->channel_word_counts[0];
+}
+
+// Consume a pending fixed-register profile on the refresh thread. Validate all
+// selected slots before replacing any of them so a profile is applied as one
+// complete unit at the init-sequence boundary.
+void spwm_apply_pending_fixed_register_profile() {
+  const SPWM_Fixed_Register_Profile_View *spwm_profile =
+      spwm_pending_fixed_register_profile.exchange(nullptr,
+                                                   std::memory_order_acq_rel);
+  if (spwm_profile == nullptr) return;
+  if (!spwm_is_valid_fixed_register_profile(spwm_profile)) {
+    spwm_last_rejected_fixed_register_profile.store(
+        spwm_profile, std::memory_order_release);
+    return;
+  }
+
+  SPWM_Runtime_State &spwm_runtime_state = spwm_get_runtime_state();
+  SPWM_Config &spwm_config = spwm_runtime_state.config;
+  for (size_t spwm_entry_index = 0;
+       spwm_entry_index < spwm_profile->entry_count;
+       ++spwm_entry_index) {
+    const size_t spwm_register_index =
+        spwm_profile->entries[spwm_entry_index].register_index;
+    const SPWM_Register_Data *spwm_register_data =
+        spwm_config.spwm_get_register_data(spwm_register_index);
+    if (spwm_register_data == nullptr || spwm_register_data->words == nullptr ||
+        spwm_register_data->word_count == 0 ||
+        spwm_config.spwm_has_rgb_register(spwm_register_index) ||
+        !spwm_init_sequence_emits_register(
+            spwm_runtime_state.init_sequence, SPWM_INIT_STEP_REGISTER,
+            spwm_register_index)) {
+      spwm_last_rejected_fixed_register_profile.store(
+          spwm_profile, std::memory_order_release);
+      return;
+    }
+  }
+
+  uint32_t spwm_register_mask = 0;
+  for (size_t spwm_entry_index = 0;
+       spwm_entry_index < spwm_profile->entry_count;
+       ++spwm_entry_index) {
+    const SPWM_Fixed_Register_Profile_Entry &spwm_entry =
+        spwm_profile->entries[spwm_entry_index];
+    if (!spwm_config.spwm_force_fixed_register_rgb_words(
+            spwm_entry.register_index, spwm_entry.channel_words)) {
+      spwm_last_rejected_fixed_register_profile.store(
+          spwm_profile, std::memory_order_release);
+      return;
+    }
+    spwm_register_mask |= static_cast<uint32_t>(
+        1u << (spwm_entry.register_index - 1));
+  }
+
+  spwm_fixed_register_profile_being_emitted = spwm_profile;
+  spwm_fixed_register_profile_remaining_mask = spwm_register_mask;
+}
+
 // Option 0 follows the selected panel profile. Profiles that do not opt into a
 // full-height horizontal layout retain the normal paired RGB1/RGB2 upload.
 int spwm_get_active_data_layout() {
@@ -442,13 +821,6 @@ SPWM_Auto_Tune_Control &spwm_get_auto_tune_control_storage() {
   static SPWM_Auto_Tune_Control spwm_auto_tune_control = {
       false, false, 5, 8, 0, 0, {0}, {0}};
   return spwm_auto_tune_control;
-}
-
-// Shortcut into the active runtime configuration for fixed register payload
-// lookup.
-const SPWM_Register_Data *spwm_get_register_data(uint8_t spwm_register_index) {
-  return spwm_get_runtime_state().config.spwm_get_register_data(
-      spwm_register_index);
 }
 
 // Validator for integer environment overrides that must be strictly positive.
@@ -717,8 +1089,8 @@ SPWM_Register_Output_Masks spwm_get_register_output_masks(
   return spwm_masks;
 }
 
-// Build the 16 per-clock RGB words for one rotating SPWM control-register
-// triple so repeated chips can reuse the same pre-expanded pattern.
+// Build the 16 per-clock GPIO values for one set of physical R/G/B control
+// words, used by both fixed and rotating register profiles.
 SPWM_Pixel_Block_GPIO_Bits spwm_make_rgb_register_gpio_bits(
     const SPWM_RGB_Frame &spwm_rgb_frame,
     const SPWM_Register_Output_Masks &spwm_masks) {
@@ -867,6 +1239,8 @@ void spwm_send_lat_pulses(GPIO *io, const HardwareMapping &h,
 
 // Shift one fixed register block into the panel, overlap LAT with the tail data
 // clocks, then emit any extra post-data LAT sections required by the panel.
+// Diagnostic profiles can provide distinct R/G/B words for the same fixed
+// slot; normal panel profiles continue broadcasting one word to every lane.
 // Purpose: Shift one fixed SPWM register block into the panel and latch it.
 // Inputs: GPIO interface, hardware mapping, 1-based register index, row bits.
 // Outputs: None.
@@ -874,8 +1248,9 @@ void spwm_send_lat_pulses(GPIO *io, const HardwareMapping &h,
 void spwm_send_register(GPIO *io, const HardwareMapping &h,
                         uint8_t spwm_register_index, uint8_t spwm_row,
                         int spwm_space_clocks) {
+  SPWM_Config &spwm_config = spwm_get_runtime_state().config;
   const SPWM_Register_Data *spwm_register_data =
-      spwm_get_register_data(spwm_register_index);
+      spwm_config.spwm_get_register_data(spwm_register_index);
   if (spwm_register_data == nullptr || spwm_register_data->word_count == 0 ||
       spwm_register_data->words == nullptr) {
     return;
@@ -883,6 +1258,12 @@ void spwm_send_register(GPIO *io, const HardwareMapping &h,
 
   const SPWM_Register_Output_Masks spwm_masks =
       spwm_get_register_output_masks(h);
+  SPWM_RGB_Frame spwm_fixed_rgb_frame = {0, 0, 0};
+  const bool spwm_has_fixed_rgb_frame =
+      spwm_config.spwm_get_fixed_register_rgb_frame(
+          spwm_register_index, &spwm_fixed_rgb_frame);
+  const SPWM_Pixel_Block_GPIO_Bits spwm_fixed_rgb_gpio_bits =
+      spwm_make_rgb_register_gpio_bits(spwm_fixed_rgb_frame, spwm_masks);
   spwm_begin_register_stream(io, h, spwm_masks.all_mask);
 
   const int spwm_total_clocks = static_cast<int>(
@@ -905,7 +1286,9 @@ void spwm_send_register(GPIO *io, const HardwareMapping &h,
       }
 
       const gpio_bits_t spwm_data_bits =
-          (spwm_word & (1u << spwm_bit)) ? spwm_masks.all_mask : 0;
+          spwm_has_fixed_rgb_frame
+              ? spwm_fixed_rgb_gpio_bits.word_gpio_bits[spwm_bit]
+              : ((spwm_word & (1u << spwm_bit)) ? spwm_masks.all_mask : 0);
       io->WriteMaskedBits(spwm_data_bits, spwm_masks.all_mask);
       io->SetBits(h.clock);
       io->ClearBits(h.clock);
@@ -982,6 +1365,10 @@ void spwm_emit_init_sequence(GPIO *io, const HardwareMapping &h) {
       spwm_runtime_state.init_sequence.step_count == 0) {
     spwm_runtime_state.init_sequence = spwm_get_initial_init_sequence();
   }
+  // Resolve the fallback script before validating a queued profile against the
+  // slots this init sequence will actually emit.
+  spwm_apply_pending_rgb_register_profile();
+  spwm_apply_pending_fixed_register_profile();
 
   for (size_t spwm_step_index = 0;
        spwm_step_index < spwm_runtime_state.init_sequence.step_count;
@@ -996,14 +1383,41 @@ void spwm_emit_init_sequence(GPIO *io, const HardwareMapping &h) {
       case SPWM_INIT_STEP_REGISTER:
         spwm_send_register(io, h, spwm_step.value, spwm_step.row,
                            spwm_step.space_clocks);
+        if (spwm_fixed_register_profile_being_emitted != nullptr &&
+            spwm_step.value > 0 &&
+            spwm_step.value <= SPWM_FORCE_REGISTER_COUNT) {
+          spwm_fixed_register_profile_remaining_mask &=
+              ~static_cast<uint32_t>(1u << (spwm_step.value - 1));
+        }
         break;
       case SPWM_INIT_STEP_RGB_REGISTER:
         spwm_send_rgb_register(io, h, spwm_step.value, spwm_step.row,
                                spwm_step.space_clocks);
+        if (spwm_rgb_register_profile_being_emitted != nullptr &&
+            spwm_rgb_register_profile_words_remaining > 0 &&
+            spwm_step.value ==
+                spwm_rgb_register_profile_being_emitted->register_index) {
+          --spwm_rgb_register_profile_words_remaining;
+        }
         break;
       default:
         break;
     }
+  }
+
+  if (spwm_rgb_register_profile_being_emitted != nullptr &&
+      spwm_rgb_register_profile_words_remaining == 0) {
+    spwm_last_emitted_rgb_register_profile.store(
+        spwm_rgb_register_profile_being_emitted, std::memory_order_release);
+    spwm_rgb_register_profile_being_emitted = nullptr;
+  }
+
+  if (spwm_fixed_register_profile_being_emitted != nullptr &&
+      spwm_fixed_register_profile_remaining_mask == 0) {
+    spwm_last_emitted_fixed_register_profile.store(
+        spwm_fixed_register_profile_being_emitted,
+        std::memory_order_release);
+    spwm_fixed_register_profile_being_emitted = nullptr;
   }
 }
 
@@ -2443,6 +2857,49 @@ bool spwm_start_initial_oe_phase(
 // -----------------------------
 // Public runtime configuration
 // -----------------------------
+bool spwm_request_rgb_register_profile(
+    const SPWM_RGB_Register_Profile_View *spwm_profile) {
+  if (!spwm_is_valid_rgb_register_profile(spwm_profile)) return false;
+  spwm_last_rejected_rgb_register_profile.store(nullptr,
+                                                 std::memory_order_release);
+  spwm_pending_rgb_register_profile.store(spwm_profile,
+                                          std::memory_order_release);
+  return true;
+}
+
+const SPWM_RGB_Register_Profile_View *
+spwm_get_last_emitted_rgb_register_profile() {
+  return spwm_last_emitted_rgb_register_profile.load(std::memory_order_acquire);
+}
+
+const SPWM_RGB_Register_Profile_View *
+spwm_get_last_rejected_rgb_register_profile() {
+  return spwm_last_rejected_rgb_register_profile.load(
+      std::memory_order_acquire);
+}
+
+bool spwm_request_fixed_register_profile(
+    const SPWM_Fixed_Register_Profile_View *spwm_profile) {
+  if (!spwm_is_valid_fixed_register_profile(spwm_profile)) return false;
+  spwm_last_rejected_fixed_register_profile.store(
+      nullptr, std::memory_order_release);
+  spwm_pending_fixed_register_profile.store(spwm_profile,
+                                            std::memory_order_release);
+  return true;
+}
+
+const SPWM_Fixed_Register_Profile_View *
+spwm_get_last_emitted_fixed_register_profile() {
+  return spwm_last_emitted_fixed_register_profile.load(
+      std::memory_order_acquire);
+}
+
+const SPWM_Fixed_Register_Profile_View *
+spwm_get_last_rejected_fixed_register_profile() {
+  return spwm_last_rejected_fixed_register_profile.load(
+      std::memory_order_acquire);
+}
+
 // Return true when the selected row-address transport is driven by the SPWM
 // blank-clock scan waveform instead of direct row output pins.
 bool spwm_row_address_type_uses_blank_clock(int spwm_row_address_type) {
@@ -2602,12 +3059,15 @@ void spwm_configure_panel_type(const char *spwm_panel_type, int spwm_columns,
         spwm_row_address_type, spwm_register_config);
   }
 
-  std::vector<uint16_t> spwm_forced_register_words;
+  // Override precedence is deliberate: selected built-in/generated profile,
+  // then the unnumbered rotating shortcut, then numbered per-slot values.
+  // This lets a numbered option replace the same rotating slot last.
+  std::array<std::vector<uint16_t>, 3> spwm_forced_register_channels;
   if (spwm_force_register != nullptr &&
-      spwm_parse_forced_register_words(spwm_force_register,
-                                       &spwm_forced_register_words)) {
+      spwm_parse_forced_rgb_register_words(
+          spwm_force_register, &spwm_forced_register_channels)) {
     spwm_runtime_state.config.spwm_force_rgb_register_words(
-        spwm_forced_register_words);
+        spwm_forced_register_channels);
   }
 
   if (spwm_force_registers != nullptr) {
@@ -2616,12 +3076,44 @@ void spwm_configure_panel_type(const char *spwm_panel_type, int spwm_columns,
          ++spwm_register_index) {
       if (spwm_force_registers[spwm_register_index] == nullptr) continue;
 
-      std::vector<uint16_t> spwm_numbered_register_words;
-      if (spwm_parse_forced_register_words(
-              spwm_force_registers[spwm_register_index],
-              &spwm_numbered_register_words)) {
-        spwm_runtime_state.config.spwm_force_register_words(
-            spwm_register_index + 1, spwm_numbered_register_words);
+      if (spwm_runtime_state.config.spwm_has_rgb_register(
+              spwm_register_index + 1)) {
+        std::array<std::vector<uint16_t>, 3>
+            spwm_numbered_register_channels;
+        if (spwm_parse_forced_rgb_register_words(
+                spwm_force_registers[spwm_register_index],
+                &spwm_numbered_register_channels)) {
+          spwm_runtime_state.config.spwm_force_register_rgb_words(
+              spwm_register_index + 1, spwm_numbered_register_channels);
+        }
+      } else {
+        // Preserve the legacy shared-word path. Only channel-labelled fixed
+        // values need the physical R/G/B lane override storage.
+        std::vector<uint16_t> spwm_numbered_register_words;
+        if (spwm_parse_forced_register_words(
+                spwm_force_registers[spwm_register_index],
+                &spwm_numbered_register_words) &&
+            spwm_numbered_register_words.size() == 1) {
+          spwm_runtime_state.config.spwm_force_register_words(
+              spwm_register_index + 1, spwm_numbered_register_words);
+          continue;
+        }
+
+        std::array<std::vector<uint16_t>, 3>
+            spwm_numbered_register_channels;
+        if (!spwm_parse_forced_rgb_register_words(
+                spwm_force_registers[spwm_register_index],
+                &spwm_numbered_register_channels) ||
+            spwm_numbered_register_channels[0].size() != 1) {
+          continue;
+        }
+        const uint16_t spwm_fixed_register_channels[3] = {
+            spwm_numbered_register_channels[0][0],
+            spwm_numbered_register_channels[1][0],
+            spwm_numbered_register_channels[2][0],
+        };
+        spwm_runtime_state.config.spwm_force_fixed_register_rgb_words(
+            spwm_register_index + 1, spwm_fixed_register_channels);
       }
     }
   }
@@ -2698,8 +3190,11 @@ bool spwm_is_enabled() {
   return spwm_get_runtime_state().enabled;
 }
 
-// Enable or disable SPWM mode.
+// Enable or disable SPWM mode. Disabling requires the refresh thread to be
+// stopped and starts the next matrix session with no stale diagnostic request
+// or completion state.
 void spwm_set_enabled(bool spwm_is_enabled_value) {
+  if (!spwm_is_enabled_value) spwm_reset_register_profile_state();
   spwm_get_runtime_state().enabled = spwm_is_enabled_value;
 }
 

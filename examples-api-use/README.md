@@ -13,6 +13,10 @@ $ sudo ./demo
 usage: ./demo <options> -D <demo-nr> [optional parameter]
 Options:
         -D <demo-nr>              : Always needs to be set
+        --register-test-pattern=<gradient|align|cycle>
+                                    : Demo 15 test pattern (Default: gradient)
+        --register-test-scan=<all|rows[,rows...]>
+                                    : Demo 15 scan filter, e.g. 32 or 1/32,1/16 (Default: all)
         --led-gpio-mapping=<name> : Name of GPIO mapping used. Default "regular"
         --led-rows=<rows>         : Panel rows. Typically 8, 16, 32 or 64; SPWM row-address types 1/2 can also use larger even counts such as 86. (Default: 32).
         --led-cols=<cols>         : Panel columns. Typically 32 or 64; SPWM panels can also use non-standard widths such as 172. (Default: 32).
@@ -29,9 +33,9 @@ Options:
         --led-spwm-row-addr-type=<0..2>: SPWM-only row-address transport. 0 = direct A-E row flow; 1 = shift-register blank-clock A/C row-select; 2 = shift-register blank-clock A+B with wrap-C row-select (Default: 0).
         --led-spwm-scan=<rows>    : SPWM-only scan-row override e.g 43 for 1/43 (Default: 0).
         --led-spwm-data-layout=<0..2>: SPWM data layout. 0 = panel default; 1 = full-height left on RGB2/right on RGB1; 2 = full-height left on RGB1/right on RGB2. Cannot be combined with --led-multiplexing (Default: 0).
-        --led-spwm-register-config=<-1..1>: SPWM register payload variant. -1 = automatic, 0 = default, 1 = alternate (Default: -1).
-        --led-spwm-force-register1=<words> ... --led-spwm-force-register6=<words>: Override individual 1-based panel-profile register slots. Fixed slots require one word; rotating RGB slots accept a wrapping sequence. Omitted slots keep their panel defaults; selecting an absent slot is an error.
-        --led-spwm-force-register=<words>: Backward-compatible shortcut for the profile's rotating RGB slot, currently register 3 where present. Numbered overrides take precedence (Default: unset).
+        --led-spwm-register-config=<-1|0|1..N>: SPWM register profile. 0 = main; N = generated regtypeN (Default: 0).
+        --led-spwm-force-register1=<words|RGB> ... --led-spwm-force-register6=<words|RGB>: Override individual 1-based panel-profile register slots. Fixed slots accept one shared word or R:<word>;G:<word>;B:<word>. Rotating RGB slots accept a shared list or quoted equal-length R:<words>;G:<words>;B:<words> lists. One labelled value is copied to all channels. Omitted slots keep their panel defaults; selecting an absent slot is an error.
+        --led-spwm-force-register=<words|RGB>: Backward-compatible shortcut for the profile's rotating RGB slot, currently register 3 where present. It accepts the same shared or RGB-labelled syntax. Numbered overrides take precedence (Default: unset).
         --led-show-refresh        : Show refresh rate.
         --led-limit-refresh=<Hz>  : Limit refresh rate to this frequency in Hz. Useful to keep a
                                     constant refresh rate on loaded system. 0=no limit. Default: 0
@@ -40,7 +44,7 @@ Options:
         --led-pwm-lsb-nanoseconds : PWM Nanoseconds for LSB (Default: 130)
         --led-pwm-dither-bits=<0..2> : Time dithering of lower bits (Default: 0)
         --led-no-hardware-pulse   : Don't use hardware pin-pulse generation.
-        --led-panel-type=<name>   : Needed to initialize special panels. Supported: 'FM6126A', 'FM6127', 'FM6373', 'ICND1065L', 'SM16380SH', 'FM6363'
+        --led-panel-type=<name>   : Needed to initialize special panels. Supported: 'FM6126A', 'FM6127', 'FM6373', 'ICND1065L', 'SM16380SH', 'FM6363', 'FM6353'
         --led-slowdown-gpio=<0..30>: Slowdown GPIO. Needed for faster Pis/slower panels (Default: 1).
         --led-rp1-pio=<0|1>       : On Raspberry Pi 5-family boards, force the RP1 PIO backend.
                                     0=default RP1 RIO, 1=PIO (Default: 0).
@@ -60,6 +64,10 @@ Demos, chosen with -D
         10 - Evolution of color (-m <time-step-ms>)
         11 - Brightness pulse generator
         12 - Colorful rotating 3d cube
+        13 - Moving vertical, horizontal, and diagonal lines [direct|swap] (-m <time-step-ms>)
+        14 - Single red pixel at x=64, y=height/2
+        15 - FM6373/FM6363/FM6353/ICND1065L/SM16380SH register profile test
+             (arrows navigate, M marks, ENTER locks finalists)
 Example:
         ./demo -D 1 runtext.ppm
 Scrolls the runtext until Ctrl-C is pressed

@@ -95,7 +95,8 @@ public class RGBLedMatrix : IDisposable
     /// <summary>
     /// Reset native framebuffer globals so that GPIO/row-address state will be
     /// reinitialized on the next matrix creation. Useful when changing
-    /// hardware-mapping critical options at runtime.
+    /// hardware-mapping critical options between matrix instances. Dispose all
+    /// matrices first; no native refresh thread may be active during this call.
     /// </summary>
     public static void ResetFramebufferGlobals() => framebuffer_reset_globals();
 

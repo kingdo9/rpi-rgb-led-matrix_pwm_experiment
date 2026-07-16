@@ -23,11 +23,13 @@
 #include <grp.h>
 #include <pwd.h>
 
+#include <array>
 #include <vector>
 
 #include "multiplex-mappers-internal.h"
 #include "framebuffer-internal.h"
 #include "spwm-helpers.h"
+#include "spwm-panel-registers.h"
 
 #include "gpio.h"
 
@@ -404,10 +406,10 @@ void PrintMatrixFlags(FILE *out, const RGBMatrix::Options &d,
           "\t--led-spwm-scan=<rows>    : SPWM-only scan-row override e.g 43 for 1/43 (Default: %d).\n"
           "\t--led-spwm-data-layout=<0..2>: SPWM data layout. 0 = panel default; 1 = full-height left on RGB2/right on RGB1; 2 = full-height left on RGB1/right on RGB2."
           "(Default: %d).\n"
-          "\t--led-spwm-register-config=<-1..1>: SPWM register payload variant. -1 = automatic, 0 = default, 1 = alternate "
+          "\t--led-spwm-register-config=<-1|0|1..N>: SPWM register profile. 0 = main; N = generated regtypeN "
           "(Default: %d).\n"
-          "\t--led-spwm-force-register=<words>: Backward-compatible shortcut for the profile's rotating RGB register slot (currently register 3).\n"
-          "\t--led-spwm-force-register<N>=<words>: Override 1-based SPWM profile register slot N, where N is 1..6. Fixed slots require one 16-bit word; rotating RGB slots accept a comma-separated sequence. Whitespace is allowed.\n\n"
+          "\t--led-spwm-force-register=<words|RGB>: Backward-compatible shortcut for the profile's rotating RGB register slot (currently register 3). A plain list is shared; use quoted R:<words>;G:<words>;B:<words> for distinct channels.\n"
+          "\t--led-spwm-force-register<N>=<words|RGB>: Override 1-based SPWM profile register slot N, where N is 1..6. Fixed slots accept one shared word or R:<word>;G:<word>;B:<word>; rotating RGB slots accept shared or RGB-labelled lists. Whitespace is allowed.\n\n"
           "\t--led-%sshow-refresh        : %show refresh rate.\n"
           "\t--led-limit-refresh=<Hz>  : Limit refresh rate to this frequency in Hz. Useful to keep a\n"
           "\t                            constant refresh rate on loaded system. 0=no limit. Default: %d\n"
@@ -559,16 +561,29 @@ bool RGBMatrix::Options::Validate(std::string *err_in) const {
     }
   }
 
-  if (spwm_register_config < -1 || spwm_register_config > 1) {
-    err->append("SPWM register config values can be -1 (automatic), 0 (default register block), or 1 (alternate register block).\n");
+  if (spwm_register_config < -1) {
+    err->append("SPWM register config must be -1 or greater. -1 and 0 use the built-in main config; positive values select generated regtypeN.\n");
     success = false;
+  } else if (spwm_register_config > 0) {
+    const size_t spwm_register_profile_count =
+        internal::spwm_get_panel_register_profile_count(panel_type);
+    if (spwm_register_profile_count == 0) {
+      err->append("Positive --led-spwm-register-config values require an SPWM panel type with generated register profiles.\n");
+      success = false;
+    } else if (static_cast<size_t>(spwm_register_config) >
+               spwm_register_profile_count) {
+      err->append("SPWM register config for the selected panel must be 0, or in the generated profile range 1..")
+          .append(std::to_string(spwm_register_profile_count))
+          .append(".\n");
+      success = false;
+    }
   }
 
   if (spwm_force_register != nullptr) {
-    std::vector<uint16_t> spwm_forced_register_words;
-    if (!internal::spwm_parse_forced_register_words(
-            spwm_force_register, &spwm_forced_register_words)) {
-      err->append("SPWM forced register must be a non-empty comma-separated list of 16-bit values such as 0x0000, 0x0100.\n");
+    std::array<std::vector<uint16_t>, 3> spwm_forced_register_channels;
+    if (!internal::spwm_parse_forced_rgb_register_words(
+            spwm_force_register, &spwm_forced_register_channels)) {
+      err->append("SPWM forced RGB register must be either one non-empty comma-separated 16-bit list or an R:<words>;G:<words>;B:<words> value with equal-length lists (quote the whole value in a shell). One labelled channel is copied to R/G/B.\n");
       success = false;
     } else if (!internal::spwm_panel_supports_forced_register(panel_type)) {
       err->append("--led-spwm-force-register requires an SPWM panel profile with a rotating RGB register block.\n");
@@ -599,15 +614,6 @@ bool RGBMatrix::Options::Validate(std::string *err_in) const {
     const size_t spwm_register_number = spwm_register_index + 1;
     const std::string spwm_flag_name =
         "--led-spwm-force-register" + std::to_string(spwm_register_number);
-    std::vector<uint16_t> spwm_forced_register_words;
-    if (!internal::spwm_parse_forced_register_words(
-            spwm_force_value, &spwm_forced_register_words)) {
-      err->append(spwm_flag_name)
-          .append(" must be a non-empty comma-separated list of 16-bit values.\n");
-      success = false;
-      continue;
-    }
-
     const internal::SPWM_Register_Slot_Type spwm_register_slot_type =
         internal::spwm_get_panel_register_slot_type(
             panel_type, spwm_register_number);
@@ -615,11 +621,33 @@ bool RGBMatrix::Options::Validate(std::string *err_in) const {
       err->append(spwm_flag_name)
           .append(" does not exist in the selected SPWM panel profile.\n");
       success = false;
-    } else if (spwm_register_slot_type ==
-                   internal::SPWM_REGISTER_SLOT_FIXED &&
-               spwm_forced_register_words.size() != 1) {
+      continue;
+    }
+
+    if (spwm_register_slot_type == internal::SPWM_REGISTER_SLOT_RGB) {
+      std::array<std::vector<uint16_t>, 3> spwm_forced_register_channels;
+      if (!internal::spwm_parse_forced_rgb_register_words(
+              spwm_force_value, &spwm_forced_register_channels)) {
+        err->append(spwm_flag_name)
+            .append(" must be either one non-empty comma-separated 16-bit list or an R:<words>;G:<words>;B:<words> value with equal-length lists (quote the whole value in a shell). One labelled channel is copied to R/G/B.\n");
+        success = false;
+      }
+      continue;
+    }
+
+    std::vector<uint16_t> spwm_forced_register_words;
+    if (internal::spwm_parse_forced_register_words(
+            spwm_force_value, &spwm_forced_register_words) &&
+        spwm_forced_register_words.size() == 1) {
+      continue;
+    }
+
+    std::array<std::vector<uint16_t>, 3> spwm_forced_register_channels;
+    if (!internal::spwm_parse_forced_rgb_register_words(
+            spwm_force_value, &spwm_forced_register_channels) ||
+        spwm_forced_register_channels[0].size() != 1) {
       err->append(spwm_flag_name)
-          .append(" targets a fixed register and requires exactly one 16-bit value.\n");
+          .append(" targets a fixed register and requires one shared 16-bit value or R:<word>;G:<word>;B:<word> (quote the whole value in a shell).\n");
       success = false;
     }
   }

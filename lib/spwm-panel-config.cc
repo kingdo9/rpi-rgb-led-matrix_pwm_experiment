@@ -256,7 +256,7 @@ static const SPWM_Init_Sequence SPWM_FM6363_INIT_SEQUENCE =
 // FM6353 shares the FM6373-style OE schedule (DMD_STM32 derives it from
 // DMD_RGB_SPWM_DRIVER, not the FM6363 base). Distinguishing features vs
 // FM6373/FM6363: 138 GCLK pulses per row, 5 fixed config registers, and a
-// per-register 14-clock LAT preamble during init.
+// 14-clock PRE_ACT before each register write during init.
 // -------------------------------------------------------------------------------------------------
 
 static const SPWM_Panel_Settings SPWM_FM6353_SETTINGS = []() {
@@ -283,16 +283,22 @@ static const SPWM_Panel_Settings SPWM_FM6353_SETTINGS = []() {
 
 // DMD_STM32 load_config_regs() emits 14-clock pre-active, 12-clock enable, and
 // 3-clock vsync LAT bursts before streaming the five fixed control registers.
-// Each register write is preceded by another 14-clock LAT preamble, expressed
-// here as the per-register LAT timing.
+// Each register write is preceded by another 14-clock LAT PRE_ACT. The
+// register timing then uses 2, 4, 6, 8, or 10 tail-latch clocks to address
+// physical reg2 through reg10.
 static const SPWM_Init_Step SPWM_FM6353_INIT_STEPS[] = {
     {SPWM_INIT_STEP_LAT_PULSES, 14, 0, 0},  // pre-active
     {SPWM_INIT_STEP_LAT_PULSES, 12, 0, 0},  // enable all output
     {SPWM_INIT_STEP_LAT_PULSES,  3, 0, 0},  // vsync
+    {SPWM_INIT_STEP_LAT_PULSES, 14, 0, 0},
     {SPWM_INIT_STEP_REGISTER,    1, 0, 0},
+    {SPWM_INIT_STEP_LAT_PULSES, 14, 0, 0},
     {SPWM_INIT_STEP_REGISTER,    2, 0, 0},
+    {SPWM_INIT_STEP_LAT_PULSES, 14, 0, 0},
     {SPWM_INIT_STEP_REGISTER,    3, 0, 0},
+    {SPWM_INIT_STEP_LAT_PULSES, 14, 0, 0},
     {SPWM_INIT_STEP_REGISTER,    4, 0, 0},
+    {SPWM_INIT_STEP_LAT_PULSES, 14, 0, 0},
     {SPWM_INIT_STEP_REGISTER,    5, 0, 0},
 };
 

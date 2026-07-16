@@ -138,8 +138,8 @@ public:
     // combined with --led-multiplexing.
     int spwm_data_layout;  // Flag --led-spwm-data-layout
 
-    // SPWM register payload variant. -1 keeps panel-specific automatic
-    // selection, while 0 and 1 force known register blocks.
+    // SPWM register profile. 0 uses the main config; a positive
+    // value N selects the active panel's generated regtypeN.
     int spwm_register_config;  // Flag --led-spwm-register-config
 
     // Type of multiplexing. 0 = direct, 1 = stripe, 2 = checker,...
@@ -184,11 +184,15 @@ public:
     bool disable_busy_waiting;   // Flag: --led-busy-waiting
 
     // Backward-compatible shortcut for the active SPWM panel profile's
-    // rotating RGB register block. The same sequence is applied to R/G/B.
+    // rotating RGB register block. A plain comma-list is applied to R/G/B.
+    // The labelled syntax is R:<list>;G:<list>;B:<list>; one label is copied
+    // to all lanes, otherwise all three equal-length lists are required.
     const char *spwm_force_register;  // Flag: --led-spwm-force-register
 
-    // Optional per-slot SPWM register overrides. Fixed slots require one word;
-    // rotating RGB slots accept a sequence. Unspecified slots keep defaults.
+    // Optional per-slot SPWM register overrides. Fixed slots accept one shared
+    // word or R:<word>;G:<word>;B:<word>. Rotating slots use the shared or
+    // labelled-list syntax above. Unspecified slots keep defaults. These
+    // pointers are borrowed through CreateFromOptions().
     const char *spwm_force_register1;  // Flag: --led-spwm-force-register1
     const char *spwm_force_register2;  // Flag: --led-spwm-force-register2
     const char *spwm_force_register3;  // Flag: --led-spwm-force-register3
