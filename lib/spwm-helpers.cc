@@ -531,6 +531,10 @@ struct SPWM_OE_Gate_State {
   SPWM_Auto_Tune_Section section;
   bool pulse_each_clock;
   bool capture_start_time;
+  // ICND2153 half-rate style: OE alternates high/low on successive clock
+  // slots (remaining parity), producing one 50%-duty GCLK pulse per two
+  // clocks. Counts are in clock slots (2x the pulse count).
+  bool half_rate_pulse;
 };
 
 struct SPWM_Scan_Config {
@@ -661,7 +665,8 @@ struct SPWM_Runtime_State {
         init_sequence(spwm_get_initial_init_sequence()),
         last_initial_oe_start_ns(0),
         target_initial_oe_start_ns(0),
-        panel_settings(spwm_get_default_panel_profile().settings) {}
+        panel_settings(spwm_get_default_panel_profile().settings),
+        startup_init_done(false) {}
 
   SPWM_Config config;
   int active_parallel_chains;
@@ -675,6 +680,10 @@ struct SPWM_Runtime_State {
   uint64_t last_initial_oe_start_ns;
   uint64_t target_initial_oe_start_ns;
   SPWM_Panel_Settings panel_settings;
+  // True once the full init sequence (including any startup-only register
+  // tail) has been emitted. Cleared whenever the sequence or the register
+  // config changes so the tail is re-sent on the next frame.
+  bool startup_init_done;
 };
 
 // Return the singleton runtime state shared by SPWM setup and refresh helpers.
@@ -744,6 +753,8 @@ void spwm_apply_pending_rgb_register_profile() {
   spwm_rgb_register_profile_being_emitted = spwm_profile;
   spwm_rgb_register_profile_words_remaining =
       spwm_profile->channel_word_counts[0];
+  // Re-emit any startup-only register tail so the new words reach the panel.
+  spwm_runtime_state.startup_init_done = false;
 }
 
 // Consume a pending fixed-register profile on the refresh thread. Validate all
@@ -799,6 +810,8 @@ void spwm_apply_pending_fixed_register_profile() {
 
   spwm_fixed_register_profile_being_emitted = spwm_profile;
   spwm_fixed_register_profile_remaining_mask = spwm_register_mask;
+  // Re-emit any startup-only register tail so the new words reach the panel.
+  spwm_runtime_state.startup_init_done = false;
 }
 
 // Option 0 follows the selected panel profile. Profiles that do not opt into a
@@ -1364,14 +1377,27 @@ void spwm_emit_init_sequence(GPIO *io, const HardwareMapping &h) {
   if (spwm_runtime_state.init_sequence.steps == nullptr ||
       spwm_runtime_state.init_sequence.step_count == 0) {
     spwm_runtime_state.init_sequence = spwm_get_initial_init_sequence();
+    spwm_runtime_state.startup_init_done = false;
   }
   // Resolve the fallback script before validating a queued profile against the
-  // slots this init sequence will actually emit.
+  // slots this init sequence will actually emit. Applying a profile clears
+  // startup_init_done so a startup-only register tail is re-emitted below.
   spwm_apply_pending_rgb_register_profile();
   spwm_apply_pending_fixed_register_profile();
 
+  // Sequences with a per-frame prefix emit their startup-only tail (register
+  // uploads) on the first frame and after register-config changes; every
+  // other frame repeats just the prefix.
+  const size_t spwm_frame_step_count =
+      spwm_runtime_state.init_sequence.frame_step_count;
+  const size_t spwm_emit_step_count =
+      (spwm_runtime_state.startup_init_done && spwm_frame_step_count > 0 &&
+       spwm_frame_step_count < spwm_runtime_state.init_sequence.step_count)
+          ? spwm_frame_step_count
+          : spwm_runtime_state.init_sequence.step_count;
+
   for (size_t spwm_step_index = 0;
-       spwm_step_index < spwm_runtime_state.init_sequence.step_count;
+       spwm_step_index < spwm_emit_step_count;
        ++spwm_step_index) {
     const SPWM_Init_Step &spwm_step =
         spwm_runtime_state.init_sequence.steps[spwm_step_index];
@@ -1419,6 +1445,8 @@ void spwm_emit_init_sequence(GPIO *io, const HardwareMapping &h) {
         std::memory_order_release);
     spwm_fixed_register_profile_being_emitted = nullptr;
   }
+
+  spwm_runtime_state.startup_init_done = true;
 }
 
 // -----------------------
@@ -1540,7 +1568,19 @@ void spwm_clock_pulse(GPIO *io, const HardwareMapping &h,
   }
 
   if (spwm_gate != nullptr && spwm_gate->active && spwm_gate->remaining > 0) {
-    io->SetBits(h.output_enable);
+    if (spwm_gate->half_rate_pulse) {
+      // 50%-duty GCLK at half the clock rate: OE high on even remaining
+      // slots, low on odd, one full pulse per two clocks.
+      if ((spwm_gate->remaining & 1) == 0) {
+        io->SetBits(h.output_enable);
+      }
+      else {
+        io->ClearBits(h.output_enable);
+      }
+    }
+    else {
+      io->SetBits(h.output_enable);
+    }
   }
 
   io->SetBits(h.clock);
@@ -2755,6 +2795,7 @@ bool spwm_oe_style_pulse_each_clock(SPWM_OE_Style spwm_oe_style) {
   switch (spwm_oe_style) {
     case SPWM_OE_STYLE_FM6363:
       return true;
+    case SPWM_OE_STYLE_ICND2153_HALF_RATE:  // parity toggle, not per-clock
     case SPWM_OE_STYLE_FM6373:
     default:
       return false;
@@ -3125,6 +3166,7 @@ void spwm_configure_panel_type(const char *spwm_panel_type, int spwm_columns,
   } else {
     spwm_runtime_state.init_sequence = spwm_default_profile.init_sequence;
   }
+  spwm_runtime_state.startup_init_done = false;
 }
 
 // Return the currently active SPWM panel settings.
@@ -3342,7 +3384,9 @@ void spwm_dump_to_matrix(GPIO *io, const HardwareMapping &h,
   SPWM_OE_Gate_State spwm_oe_gate = {0, false, &spwm_auto_tune_state,
                                      SPWM_AUTO_TUNE_SECTION_NONE,
                                      spwm_pulse_oe_each_clock,
-                                     false};
+                                     false,
+                                     spwm_oe_style ==
+                                         SPWM_OE_STYLE_ICND2153_HALF_RATE};
   SPWM_Scan_State spwm_scan_state = {0, 0, false, false, 0, false};
   const int spwm_init_oe_clks = spwm_get_first_oe_clk_length();
   const SPWM_Scan_Config spwm_upload_scan_config =
