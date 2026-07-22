@@ -760,6 +760,68 @@ static const SPWM_Fixed_Register_Profile_Entry fm6363_regtype72_entries[] = {
     {5, {0x7e08, 0x7e08, 0x7e08}},
 };
 
+// fm6363_regtype73
+// Source: P10 - FM6363 - 1/2
+static const SPWM_Fixed_Register_Profile_Entry fm6363_regtype73_entries[] = {
+    {1, {0x01b0, 0x01b0, 0x01b0}},
+    {2, {0xf2de, 0xe710, 0xd6e4}},
+    {3, {0x60b6, 0x60b6, 0x60b6}},
+    {4, {0x1a00, 0x1a70, 0x1a70}},
+    {5, {0x7e08, 0x7e08, 0x7e08}},
+};
+
+// fm6363_regtype74
+// Source: P4 - FM6363 - 1/10
+static const SPWM_Fixed_Register_Profile_Entry fm6363_regtype74_entries[] = {
+    {1, {0x0978, 0x0978, 0x0978}},
+    {2, {0xf33a, 0xd362, 0xb35a}},
+    {3, {0x20b6, 0x20b2, 0x20b2}},
+    {4, {0x1a00, 0x1a70, 0x1a70}},
+    {5, {0x7c08, 0x7c08, 0x7c08}},
+};
+
+// fm6363_regtype75
+// Source: P2.5 - FM6363 - 1/16
+static const SPWM_Fixed_Register_Profile_Entry fm6363_regtype75_entries[] = {
+    {1, {0x0ff8, 0x0ff8, 0x0ff8}},
+    {2, {0xf2db, 0xe6bf, 0xd71f}},
+    {3, {0x60b2, 0x60b6, 0x60b6}},
+    {4, {0x0a10, 0x0a70, 0x0a70}},
+    {5, {0x7e08, 0x7e08, 0x7e08}},
+};
+
+// fm6363_regtype76
+// Source: P5 - FM6363 - 1/11
+// Duplicate sources: 11
+static const SPWM_Fixed_Register_Profile_Entry fm6363_regtype76_entries[] = {
+    {1, {0x0a70, 0x0a70, 0x0a70}},
+    {2, {0xf306, 0xe702, 0xd720}},
+    {3, {0x60b6, 0x60b6, 0x60b6}},
+    {4, {0x1a10, 0x1a70, 0x1a70}},
+    {5, {0x7e08, 0x7e08, 0x7e08}},
+};
+
+// fm6363_regtype77
+// Source: P6 - FM6363 - 1/6
+// Duplicate sources: 1
+static const SPWM_Fixed_Register_Profile_Entry fm6363_regtype77_entries[] = {
+    {1, {0x0578, 0x0578, 0x0578}},
+    {2, {0xf313, 0xe6f5, 0xd6ef}},
+    {3, {0x20b2, 0x20b2, 0x20b2}},
+    {4, {0x0a10, 0x0a70, 0x0a70}},
+    {5, {0x7e08, 0x7e08, 0x7e08}},
+};
+
+// fm6363_regtype78
+// Source: P3 - FM6363 - 1/13
+// Duplicate sources: 4
+static const SPWM_Fixed_Register_Profile_Entry fm6363_regtype78_entries[] = {
+    {1, {0x0cf8, 0x0cf8, 0x0cf8}},
+    {2, {0xf317, 0xe721, 0xd6e7}},
+    {3, {0x20a6, 0x20b6, 0x20b6}},
+    {4, {0x0a00, 0x0a70, 0x0a70}},
+    {5, {0x7c08, 0x7c08, 0x7c08}},
+};
 static const SPWM_Fixed_Register_Profile_View FM6363_REGISTER_PROFILES[] = {
     {"fm6363_regtype1",
      fm6363_regtype1_entries,
@@ -977,6 +1039,24 @@ static const SPWM_Fixed_Register_Profile_View FM6363_REGISTER_PROFILES[] = {
     {"fm6363_regtype72",
      fm6363_regtype72_entries,
      sizeof(fm6363_regtype72_entries) / sizeof(fm6363_regtype72_entries[0])},
+    {"fm6363_regtype73",
+     fm6363_regtype73_entries,
+     sizeof(fm6363_regtype73_entries) / sizeof(fm6363_regtype73_entries[0])},
+    {"fm6363_regtype74",
+     fm6363_regtype74_entries,
+     sizeof(fm6363_regtype74_entries) / sizeof(fm6363_regtype74_entries[0])},
+    {"fm6363_regtype75",
+     fm6363_regtype75_entries,
+     sizeof(fm6363_regtype75_entries) / sizeof(fm6363_regtype75_entries[0])},
+    {"fm6363_regtype76",
+     fm6363_regtype76_entries,
+     sizeof(fm6363_regtype76_entries) / sizeof(fm6363_regtype76_entries[0])},
+    {"fm6363_regtype77",
+     fm6363_regtype77_entries,
+     sizeof(fm6363_regtype77_entries) / sizeof(fm6363_regtype77_entries[0])},
+    {"fm6363_regtype78",
+     fm6363_regtype78_entries,
+     sizeof(fm6363_regtype78_entries) / sizeof(fm6363_regtype78_entries[0])},
 };
 
 static const size_t FM6363_REGISTER_PROFILE_COUNT =
@@ -1560,6 +1640,54 @@ static const FM6363_Register_Test_Profile FM6363_REGISTER_TEST_PROFILES[] = {
      "ChipCode=208",
      "Scan_32",
      1},
+    {{"fm6363_regtype73",
+      fm6363_regtype73_entries,
+      sizeof(fm6363_regtype73_entries) / sizeof(fm6363_regtype73_entries[0])},
+     "P10 - FM6363 - 1/2",
+     0,
+     "ChipCode=208",
+     "Scan_2",
+     0},
+    {{"fm6363_regtype74",
+      fm6363_regtype74_entries,
+      sizeof(fm6363_regtype74_entries) / sizeof(fm6363_regtype74_entries[0])},
+     "P4 - FM6363 - 1/10",
+     0,
+     "ChipCode=208",
+     "Scan_10",
+     1},
+    {{"fm6363_regtype75",
+      fm6363_regtype75_entries,
+      sizeof(fm6363_regtype75_entries) / sizeof(fm6363_regtype75_entries[0])},
+     "P2.5 - FM6363 - 1/16",
+     0,
+     "ChipCode=208",
+     "Scan_16",
+     0},
+    {{"fm6363_regtype76",
+      fm6363_regtype76_entries,
+      sizeof(fm6363_regtype76_entries) / sizeof(fm6363_regtype76_entries[0])},
+     "P5 - FM6363 - 1/11",
+     11,
+     "ChipCode=208",
+     "Scan_11",
+     0},
+    {{"fm6363_regtype77",
+      fm6363_regtype77_entries,
+      sizeof(fm6363_regtype77_entries) / sizeof(fm6363_regtype77_entries[0])},
+     "P6 - FM6363 - 1/6",
+     1,
+     "ChipCode=208",
+     "Scan_6",
+     2},
+    {{"fm6363_regtype78",
+      fm6363_regtype78_entries,
+      sizeof(fm6363_regtype78_entries) / sizeof(fm6363_regtype78_entries[0])},
+     "P3 - FM6363 - 1/13",
+     4,
+     "ChipCode=208",
+     "Scan_13",
+     5},
 };
 
 static const size_t FM6363_REGISTER_TEST_PROFILE_COUNT =

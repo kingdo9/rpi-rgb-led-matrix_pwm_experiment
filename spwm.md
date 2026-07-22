@@ -48,8 +48,8 @@ NOTE **--led-show-refresh** may cause some glitches, so disable this once you ha
 
 **Recommended to use --led-limit-refresh=60**
 
---led-spwm-row-addr-type=0 - DP32019B Direct \
---led-spwm-row-addr-type=1 - DP32020A Shift Register
+--led-spwm-row-addr-type=0 - DP32019B Direct\
+--led-spwm-row-addr-type=1 - DP32020A Shift Register\
 --led-spwm-row-addr-type=2 - DP32020A Shift Register Variation
 <br><br>
 For full-height row-address type 1/2 panels eg 128x64 64S `--led-spwm-scan=64`\
