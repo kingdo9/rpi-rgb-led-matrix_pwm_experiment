@@ -31,6 +31,12 @@ struct SPWM_Upload_Geometry {
 enum SPWM_OE_Style {
   SPWM_OE_STYLE_FM6373 = 0,
   SPWM_OE_STYLE_FM6363 = 1,
+  // One OE/GCLK pulse spanning two clock slots (half the FM6363 pulse rate,
+  // 50% duty). Matches the ICND2153 field driver's embedded-GCLK waveform
+  // (GCLK_SCALE=2: GCLK toggled every other shift clock). Profiles using
+  // this style must express OE counts in clock slots, i.e. doubled:
+  // 138 GCLK pulses per row = 276 slots.
+  SPWM_OE_STYLE_ICND2153_HALF_RATE = 2,
 };
 
 // SPWM-only row-address transport selected by --led-spwm-row-addr-type.

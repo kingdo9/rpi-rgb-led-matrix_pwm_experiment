@@ -32,6 +32,12 @@ struct SPWM_Init_Step {
 struct SPWM_Init_Sequence {
   const SPWM_Init_Step *steps;  // Backing storage for the init steps.
   size_t step_count;          // Number of entries in `steps`.
+  // When > 0, only the first `frame_step_count` steps repeat every frame;
+  // the remaining tail (typically config-register uploads) is emitted once
+  // at startup and re-emitted whenever the register config or the active
+  // profile changes. 0 keeps the historical behavior: full sequence every
+  // frame.
+  size_t frame_step_count;
 };
 
 // Complete description of an SPWM-capable panel type, including geometry, init

@@ -24,11 +24,15 @@ bool spwm_panel_type_matches(const char *spwm_panel_type,
 }
 
 // Wrap a compile-time init-step array in the lightweight runtime view used by
-// the SPWM upload code.
+// the SPWM upload code. `spwm_frame_step_count` > 0 marks only that leading
+// prefix as per-frame; the tail is emitted once at startup (and again on
+// register-config changes).
 template <size_t N>
 SPWM_Init_Sequence spwm_make_init_sequence(
-    const SPWM_Init_Step (&spwm_steps)[N]) {
-  SPWM_Init_Sequence spwm_init_sequence = {spwm_steps, N};
+    const SPWM_Init_Step (&spwm_steps)[N],
+    size_t spwm_frame_step_count = 0) {
+  SPWM_Init_Sequence spwm_init_sequence = {spwm_steps, N,
+                                           spwm_frame_step_count};
   return spwm_init_sequence;
 }
 
@@ -305,6 +309,75 @@ static const SPWM_Init_Step SPWM_FM6353_INIT_STEPS[] = {
 static const SPWM_Init_Sequence SPWM_FM6353_INIT_SEQUENCE =
     spwm_make_init_sequence(SPWM_FM6353_INIT_STEPS);
 
+// -------------------------------------------------------------------------------------------------
+// ICND2153 profile definition.
+// Protocol recovered from a working field driver (DWARF disassembly of its
+// ICND2153_app.o; see raceclock repo ICND2153-PROTOCOL-DECODED.md). Same
+// DMD_STM32-style command grammar as FM6353: PRE_ACT(14) / enable(12) /
+// vsync(3) LAT bursts, then five registers each preceded by PRE_ACT(14) and
+// committed with per-register tail-latch widths {4, 6, 8, 10, 2}.
+// -------------------------------------------------------------------------------------------------
+
+static const SPWM_Panel_Settings SPWM_ICND2153_SETTINGS = []() {
+  // OE/GCLK waveform replicates the field driver's embedded-GCLK stream:
+  // GCLK toggles every other shift clock (GCLK_SCALE=2 there), i.e. one
+  // 50%-duty pulse per two clock slots. The half-rate style expresses all
+  // OE counts in clock slots, so values are 2x the pulse counts:
+  // 138 GCLK pulses per row = 276 slots. Full-rate FM6363-style pulses
+  // showed row-boundary trails on bright content at high grayscale.
+  SPWM_Panel_Settings spwm_settings = spwm_make_default_panel_settings();
+  // Field deployment geometry: 64x32 1/8-scan modules, paired RGB1/RGB2.
+  spwm_settings.default_rows = 32;
+  spwm_settings.default_columns = 64;
+  spwm_settings.default_data_layout = SPWM_DATA_LAYOUT_PROFILE_DEFAULT;
+  spwm_settings.auto_tune_oe_gaps = false;
+  spwm_settings.auto_tune_frames = 0;
+  spwm_settings.auto_tune_max_step_clks = 0;
+  // CRITICAL: the ICND2153 advances its internal display-row counter by
+  // counting GCLK pulses in fixed 138-pulse quanta. Every OE/GCLK burst
+  // must be an exact multiple of 138 pulses (276 half-rate slots) or the
+  // internal counter desyncs from the external row address and bright
+  // content ghosts onto other rows at high grayscale. Verified on
+  // hardware: 212-pulse upload bursts (FM6353 baseline) produced faint
+  // horizontal lines at brightness > ~60%; 138-pulse quanta are clean at
+  // full brightness.
+  spwm_settings.first_oe_clk_length = 276;
+  spwm_settings.end_of_frame_extra_row_cycles = 1;
+  spwm_settings.frame_end_sleep_us = 100;
+  spwm_settings.oe_during_upload_clk_count = 276;
+  spwm_settings.oe_after_upload_clk_count = 276;
+  spwm_settings.oe_clk_look_behind = 0;
+  spwm_settings.oe_clk_length = 276;
+  spwm_settings.oe_style = SPWM_OE_STYLE_ICND2153_HALF_RATE;
+  return spwm_settings;
+}();
+
+// Mirrors the field driver: InitICND2153() ran OutEnable (PRE_ACT + enable)
+// then sendConfData() per register — once at startup, not per frame. Only
+// the 3-clock vsync (frame swap) recurred per frame, from the stream header.
+// frame_step_count = 1 reproduces that split: the vsync prefix repeats every
+// frame, the config tail is emitted on the first frame only (and again if
+// the register config changes at runtime).
+static const SPWM_Init_Step SPWM_ICND2153_INIT_STEPS[] = {
+    {SPWM_INIT_STEP_LAT_PULSES,  3, 0, 0},  // vsync (per frame)
+    {SPWM_INIT_STEP_LAT_PULSES, 14, 0, 0},  // pre-active     (startup only
+    {SPWM_INIT_STEP_LAT_PULSES, 12, 0, 0},  // enable output   from here on)
+    {SPWM_INIT_STEP_LAT_PULSES, 14, 0, 0},
+    {SPWM_INIT_STEP_REGISTER,    1, 0, 0},
+    {SPWM_INIT_STEP_LAT_PULSES, 14, 0, 0},
+    {SPWM_INIT_STEP_RGB_REGISTER, 2, 0, 0},
+    {SPWM_INIT_STEP_LAT_PULSES, 14, 0, 0},
+    {SPWM_INIT_STEP_REGISTER,    3, 0, 0},
+    {SPWM_INIT_STEP_LAT_PULSES, 14, 0, 0},
+    {SPWM_INIT_STEP_REGISTER,    4, 0, 0},
+    {SPWM_INIT_STEP_LAT_PULSES, 14, 0, 0},
+    {SPWM_INIT_STEP_REGISTER,    5, 0, 0},
+};
+
+static const SPWM_Init_Sequence SPWM_ICND2153_INIT_SEQUENCE =
+    spwm_make_init_sequence(SPWM_ICND2153_INIT_STEPS,
+                            /*spwm_frame_step_count=*/1);
+
 // This table describes panel-tied behavior only: init sequence, register
 // factory, default OE timing, and panel geometry defaults. Register payloads
 // live in spwm-panel-registers.cc. The runtime row transport still comes from
@@ -330,6 +403,10 @@ static const SPWM_Panel_Profile SPWM_PANEL_PROFILES[] = {
      SPWM_FM6353_SETTINGS,
      spwm_create_fm6353_config,
      SPWM_FM6353_INIT_SEQUENCE},
+    {"icnd2153",
+     SPWM_ICND2153_SETTINGS,
+     spwm_create_icnd2153_config,
+     SPWM_ICND2153_INIT_SEQUENCE},
 };
 
 }  // namespace

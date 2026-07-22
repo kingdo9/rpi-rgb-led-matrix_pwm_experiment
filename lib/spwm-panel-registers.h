@@ -30,6 +30,9 @@ SPWM_Config spwm_create_fm6363_config(
 SPWM_Config spwm_create_fm6353_config(
     const SPWM_Panel_Settings &spwm_settings, int spwm_columns,
     int spwm_row_address_type, int spwm_register_config);
+SPWM_Config spwm_create_icnd2153_config(
+    const SPWM_Panel_Settings &spwm_settings, int spwm_columns,
+    int spwm_row_address_type, int spwm_register_config);
 
 }  // namespace internal
 }  // namespace rgb_matrix

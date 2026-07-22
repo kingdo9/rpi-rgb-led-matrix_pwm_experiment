@@ -104,6 +104,27 @@ public:
   }
 };
 
+// Like Stripe, but the two row-halves interleave at half-panel-width
+// granularity instead of full panel width. Matches ICND2153-based 64x32
+// 1/8-scan panels whose per-panel chip cascade runs
+// [cols 0..31, lower rows][cols 0..31, upper rows][cols 32..63, lower]
+// [cols 32..63, upper] (reverse-engineered from a working field driver's
+// Framebuffer::ValueAt: col_id = (c<32?0:4) + (upper?2:0) + (c%32)/16).
+class HalfWidthStripeMultiplexMapper : public MultiplexMapperBase {
+public:
+  HalfWidthStripeMultiplexMapper()
+      : MultiplexMapperBase("HalfWidthStripe", 2) {}
+
+  void MapSinglePanel(int x, int y, int *matrix_x, int *matrix_y) const {
+    const int half_cols = panel_cols_ / 2;
+    const bool is_top_stripe = (y % (panel_rows_/2)) < panel_rows_/4;
+    *matrix_x = (x / half_cols) * panel_cols_
+                + (is_top_stripe ? half_cols : 0) + (x % half_cols);
+    *matrix_y = ((y / (panel_rows_/2)) * (panel_rows_/4)
+                 + y % (panel_rows_/4));
+  }
+};
+
 class FlippedStripeMultiplexMapper : public MultiplexMapperBase {
 public:
   FlippedStripeMultiplexMapper() : MultiplexMapperBase("FlippedStripe", 2) {}
@@ -580,6 +601,7 @@ static MuxMapperList *CreateMultiplexMapperList() {
   result->push_back(new P3Outdoor64x64MultiplexMapper());
   result->push_back(new DoubleZMultiplexMapper());
   result->push_back(new P4Outdoor80x40Mapper());
+  result->push_back(new HalfWidthStripeMultiplexMapper());
   return result;
 }
 

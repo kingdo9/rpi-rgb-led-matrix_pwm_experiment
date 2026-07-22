@@ -517,6 +517,52 @@ static const SPWM_Register_Config_Entry
     spwm_make_fixed_register_config_entry(5, 0x0040),
 };
 
+// -------------------------------------------------------------------------------------------------
+// ICND2153 register definition.
+// -------------------------------------------------------------------------------------------------
+
+// Recovered from a working field deployment's driver (DWARF disassembly of
+// its ICND2153_app.o: five registers written in cmd_latchs order
+// {4, 6, 8, 10, 2}). PRE_ACT is emitted separately by the panel init
+// sequence before each write, matching that driver's sendConfData(), so
+// these are the tail-latch widths that select the physical register.
+static const uint8_t SPWM_ICND2153_REGISTER_SEND_LAT[][1] = {
+    {4},
+    {6},
+    {8},
+    {10},
+    {2},
+};
+static const SPWM_Register_Timing SPWM_ICND2153_REGISTER_TIMINGS[] = {
+    spwm_make_register_timing(SPWM_ICND2153_REGISTER_SEND_LAT[0]),
+    spwm_make_register_timing(SPWM_ICND2153_REGISTER_SEND_LAT[1]),
+    spwm_make_register_timing(SPWM_ICND2153_REGISTER_SEND_LAT[2]),
+    spwm_make_register_timing(SPWM_ICND2153_REGISTER_SEND_LAT[3]),
+    spwm_make_register_timing(SPWM_ICND2153_REGISTER_SEND_LAT[4]),
+};
+
+// Register 2 carries per-color words (current gain / white balance as tuned
+// for the field panels the values were recovered from).
+static const uint16_t SPWM_ICND2153_REGISTER2_R[] = {0x7dfe};
+static const uint16_t SPWM_ICND2153_REGISTER2_G[] = {0x71fe};
+static const uint16_t SPWM_ICND2153_REGISTER2_B[] = {0x5dfe};
+static const SPWM_RGB_Word_Sequences
+    SPWM_ICND2153_REGISTER2_SEQUENCES = {
+    spwm_make_word_sequence(SPWM_ICND2153_REGISTER2_R),
+    spwm_make_word_sequence(SPWM_ICND2153_REGISTER2_G),
+    spwm_make_word_sequence(SPWM_ICND2153_REGISTER2_B),
+};
+
+static const SPWM_Register_Config_Entry
+    SPWM_ICND2153_REGISTER_ENTRIES[] = {
+    spwm_make_fixed_register_config_entry(1, 0x0770),
+    spwm_make_rgb_register_config_entry(
+        2, SPWM_ICND2153_REGISTER2_SEQUENCES),
+    spwm_make_fixed_register_config_entry(3, 0x4207),
+    spwm_make_fixed_register_config_entry(4, 0x0040),
+    spwm_make_fixed_register_config_entry(5, 0x0008),
+};
+
 }  // namespace
 
 // Keep option validation tied to the exact generated table selected later by
@@ -537,6 +583,8 @@ size_t spwm_get_panel_register_profile_count(const char *spwm_panel_type) {
   if (spwm_register_panel_type_matches(spwm_panel_type, "fm6353")) {
     return FM6353_REGISTER_PROFILE_COUNT;
   }
+  // ICND2153 has no generated regtype table yet; only the built-in main
+  // config recovered from the field driver is available.
   return 0;
 }
 
@@ -616,6 +664,16 @@ SPWM_Config spwm_create_fm6353_config(
     spwm_apply_fixed_register_profile(&spwm_config, *spwm_profile);
   }
   return spwm_config;
+}
+
+SPWM_Config spwm_create_icnd2153_config(
+    const SPWM_Panel_Settings &spwm_settings, int spwm_columns,
+    int /*spwm_row_address_type*/, int /*spwm_register_config*/) {
+  // No generated regtype overlays yet; the built-in main config is the
+  // register set recovered from the working field driver.
+  return spwm_create_register_config(
+      spwm_settings, spwm_columns, SPWM_ICND2153_REGISTER_TIMINGS,
+      spwm_make_register_config_entries(SPWM_ICND2153_REGISTER_ENTRIES));
 }
 
 }  // namespace internal
