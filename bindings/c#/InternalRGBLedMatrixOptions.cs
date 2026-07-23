@@ -29,6 +29,13 @@ internal struct InternalRGBLedMatrixOptions
     public IntPtr panel_type;
     public int limit_refresh_rate_hz;
     public byte disable_busy_waiting;
+    public IntPtr spwm_force_register;
+    public IntPtr spwm_force_register1;
+    public IntPtr spwm_force_register2;
+    public IntPtr spwm_force_register3;
+    public IntPtr spwm_force_register4;
+    public IntPtr spwm_force_register5;
+    public IntPtr spwm_force_register6;
 
     public InternalRGBLedMatrixOptions(RGBLedMatrixOptions opt)
     {
@@ -56,5 +63,12 @@ internal struct InternalRGBLedMatrixOptions
         spwm_data_layout = opt.SpwmDataLayout;
         spwm_register_config = opt.SpwmRegisterConfig;
         disable_busy_waiting = (byte)(opt.DisableBusyWaiting ? 1 : 0);
+        spwm_force_register = Marshal.StringToHGlobalAnsi(opt.SpwmForceRegister);
+        spwm_force_register1 = Marshal.StringToHGlobalAnsi(opt.SpwmForceRegister1);
+        spwm_force_register2 = Marshal.StringToHGlobalAnsi(opt.SpwmForceRegister2);
+        spwm_force_register3 = Marshal.StringToHGlobalAnsi(opt.SpwmForceRegister3);
+        spwm_force_register4 = Marshal.StringToHGlobalAnsi(opt.SpwmForceRegister4);
+        spwm_force_register5 = Marshal.StringToHGlobalAnsi(opt.SpwmForceRegister5);
+        spwm_force_register6 = Marshal.StringToHGlobalAnsi(opt.SpwmForceRegister6);
     }
 };

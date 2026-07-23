@@ -12,6 +12,13 @@ OBJECTS=gpio.o led-matrix.o options-initialize.o framebuffer.o \
 	rp1/rp1_spwm_gpio.o rp1/rp1_backend.o rp1/rp1_pio_backend.o rp1/rp1_pio_support.o \
 	rp1/rp1_rio_backend.o \
     spwm-helpers.o spwm-panel-config.o spwm-panel-registers.o \
+    spwm/registertest/spwm-register-profile-loader.o
+
+# The static library keeps the loader free of libdl. The shared library uses a
+# separately compiled loader so packaged catalogs can be found beside the .so.
+SHARED_PROFILE_LOADER_OBJECT=spwm/registertest/spwm-register-profile-loader-shared.o
+SHARED_OBJECTS=$(filter-out spwm/registertest/spwm-register-profile-loader.o,$(OBJECTS)) \
+	$(SHARED_PROFILE_LOADER_OBJECT)
 
 TARGET=librgbmatrix
 
@@ -188,13 +195,29 @@ all : $(TARGET).a $(TARGET).so.1
 $(TARGET).a : $(OBJECTS)
 	$(AR) rcs $@ $^
 
-$(TARGET).so.1 : $(OBJECTS)
-	$(CXX) -shared $(LTO_FLAGS) -Wl,-soname,$@ -o $@ $^ -lpthread  -lrt -lm -lpthread
+$(TARGET).so.1 : $(SHARED_OBJECTS)
+	$(CXX) -shared $(LTO_FLAGS) -Wl,-soname,$@ -o $@ $^ -lpthread -lrt -lm -ldl
 
 led-matrix.o: led-matrix.cc $(INCDIR)/led-matrix.h
 thread.o : thread.cc $(INCDIR)/thread.h
 framebuffer.o: framebuffer.cc framebuffer-internal.h
 graphics.o: graphics.cc utf8-internal.h
+options-initialize.o: options-initialize.cc spwm-panel-registers.h
+spwm-panel-registers.o: \
+	spwm-panel-registers.cc spwm-panel-registers.h \
+	spwm/registertest/spwm-register-profile-loader.h
+
+spwm/registertest/spwm-register-profile-loader.o: \
+	spwm/registertest/spwm-register-profile-loader.cc \
+	spwm/registertest/spwm-register-profile-loader.h spwm-helpers.h
+
+$(SHARED_PROFILE_LOADER_OBJECT): \
+	spwm/registertest/spwm-register-profile-loader.cc \
+	spwm/registertest/spwm-register-profile-loader.h spwm-helpers.h \
+	compiler-flags
+	$(CXX) -I$(INCDIR) $(CXXFLAGS) \
+		-DRGBMATRIX_SPWM_PROFILE_MODULE_RELATIVE=1 -D_GNU_SOURCE \
+		-c -o $@ $<
 
 %.o : %.cc compiler-flags
 	$(CXX) -I$(INCDIR) $(CXXFLAGS) -c -o $@ $<
@@ -203,7 +226,8 @@ graphics.o: graphics.cc utf8-internal.h
 	$(CC)  -I$(INCDIR) $(CFLAGS) -c -o $@ $<
 
 clean:
-	rm -f $(OBJECTS) $(TARGET).a $(TARGET).so.1
+	rm -f $(OBJECTS) $(SHARED_PROFILE_LOADER_OBJECT) \
+		$(TARGET).a $(TARGET).so.1
 
 compiler-flags: FORCE
 	@echo '$(CXX) $(CXXFLAGS)' | cmp -s - $@ || echo '$(CXX) $(CXXFLAGS)' > $@

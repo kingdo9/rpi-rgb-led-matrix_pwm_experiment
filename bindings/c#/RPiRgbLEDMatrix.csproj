@@ -13,10 +13,18 @@
     <ItemGroup>
         <Compile Remove="examples\**" />
         <None Remove="examples\**" />
-        <None Condition="$(SkipNative) != 'true'" Pack="true" 
+        <None Condition="$(SkipNative) != 'true'" Pack="true"
               Include="..\..\lib\librgbmatrix.so.1"
               PackagePath="\runtimes\linux-arm64\native" >
             <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+            <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+        </None>
+        <None Condition="$(SkipNative) != 'true'" Pack="true"
+              Include="..\..\lib\spwm\registertest\data\*.profiles"
+              Link="%(Filename)%(Extension)"
+              PackagePath="\runtimes\linux-arm64\native">
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+            <CopyToPublishDirectory>Always</CopyToPublishDirectory>
         </None>
     </ItemGroup>
 

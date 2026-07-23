@@ -14,6 +14,10 @@
 set(RGBMATRIX_RP1_PIO_VENDOR_DIR
     ${CMAKE_CURRENT_SOURCE_DIR}/rp1/rp1_pio_vendor)
 
+file(RELATIVE_PATH RGBMATRIX_SPWM_PROFILE_MODULE_DATA_DIR
+    "${CMAKE_INSTALL_FULL_LIBDIR}"
+    "${CMAKE_INSTALL_FULL_DATADIR}/rgbmatrix/spwm/registertest")
+
 # Define the RGBMATRIX headers.
 set(RGBMATRIX_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/../include/canvas.h
@@ -48,6 +52,7 @@ set(RGBMATRIX_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/spwm-helpers.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/spwm-panel-config.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/spwm-panel-registers.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/spwm/registertest/spwm-register-profile-loader.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/thread.cc
 )
 cmake_print_variables(RGBMATRIX_SOURCES)
@@ -67,6 +72,17 @@ target_include_directories(rgbmatrix PRIVATE
     ${RGBMATRIX_RP1_PIO_VENDOR_DIR}/piolib/include
     ${RGBMATRIX_RP1_PIO_VENDOR_DIR}/include
 )
+target_compile_definitions(rgbmatrix PRIVATE
+    RGBMATRIX_SPWM_PROFILE_DATA_DIR="${CMAKE_INSTALL_FULL_DATADIR}/rgbmatrix/spwm/registertest")
+get_target_property(RGBMATRIX_LIBRARY_TYPE rgbmatrix TYPE)
+if(RGBMATRIX_LIBRARY_TYPE STREQUAL "SHARED_LIBRARY" OR
+   RGBMATRIX_LIBRARY_TYPE STREQUAL "MODULE_LIBRARY")
+    target_compile_definitions(rgbmatrix PRIVATE
+        RGBMATRIX_SPWM_PROFILE_MODULE_RELATIVE=1
+        RGBMATRIX_SPWM_PROFILE_MODULE_DATA_DIR="${RGBMATRIX_SPWM_PROFILE_MODULE_DATA_DIR}"
+        _GNU_SOURCE)
+    target_link_libraries(rgbmatrix PRIVATE ${CMAKE_DL_LIBS})
+endif()
 
 # Install the library.
 #install(
@@ -79,6 +95,9 @@ install(
     EXPORT rgbmatrixTargets
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )
+install(
+    DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/spwm/registertest/data/
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/rgbmatrix/spwm/registertest)
 #install(
 #    TARGETS rgbmatrix
 #    EXPORT rgbmatrixTargets

@@ -23,7 +23,7 @@ sudo apt install -y make build-essential rsync ssh \
 The following tasks are available:
 - `Sync C++`: Syncs the local folder with the remote (Does not sync the `bindings` folder)
 - `Build C++`: Builds the C++ library (Auto-runs `Sync C++`)
-- `Deploy C++`: Deploys `librgbmatrix.so.1` to `/usr/lib` (Auto-runs `Build C++`)
+- `Deploy C++`: Deploys `librgbmatrix.so.1` and the SPWM register-profile catalogs to `/usr/lib` (Auto-runs `Build C++`)
 
 #### Local building
 The following tasks are available:
@@ -48,7 +48,7 @@ The following tasks are available:
 - Hit F5
   - C++ will be built locally
   - The currently selected C# example will be built locally
-  - `librgbmatrix.so.1` will then be copied into the publish folder for the example
+  - `librgbmatrix.so.1` and the SPWM register-profile catalogs will then be copied into the publish folder for the example
   - The example will be rsynced to the Pi
   - The debugger will be attached
 
@@ -61,4 +61,3 @@ The following tasks are available:
   - The currently selected C# example will be built locally
   - The example will be rsynced to the Pi
   - The debugger will be attached 
-

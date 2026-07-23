@@ -15,9 +15,13 @@ Currently tested SPWM displays.
 
 FM6373 / DP32019B - 128x64 \
 FM6363 / DP32020A - 128x64 \
-FM6353 \
+FM6353 | ICND2053 \
 SM16380SH - 128x64 \
 ICND1065L / 5958 - 172x86 - slight display issue in some use cases
+
+[How To Run SPWM Panels](#how-to-run-s-pwm-panels)
+
+[Find Your Optimum Register Config](#find-your-optimum-register-config)
 
 [Further discussion for SPWM panels](https://github.com/hzeller/rpi-rgb-led-matrix/issues/1866).
 
@@ -36,7 +40,7 @@ The main parameter to adjust for performance tweaking is adding the below to the
 
 NOTE **--led-show-refresh** may cause some glitches, so disable this once you have finished testing. Seen on SM16380SH
 
-NOTE **--led-spwm-register-config** | Some drivers like the SM16380SH an alternative register block for 07 is added. This can help with timing on different Pi models. So test both =1 and =0 if you notice any display glitches.
+
 
 ---
 
@@ -44,8 +48,8 @@ NOTE **--led-spwm-register-config** | Some drivers like the SM16380SH an alterna
 
 **Recommended to use --led-limit-refresh=60**
 
---led-spwm-row-addr-type=0 - DP32019B Direct \
---led-spwm-row-addr-type=1 - DP32020A Shift Register
+--led-spwm-row-addr-type=0 - DP32019B Direct\
+--led-spwm-row-addr-type=1 - DP32020A Shift Register\
 --led-spwm-row-addr-type=2 - DP32020A Shift Register Variation
 <br><br>
 For full-height row-address type 1/2 panels eg 128x64 64S `--led-spwm-scan=64`\
@@ -73,25 +77,29 @@ Pi 4 - FM6373 / DP32019B 128x64 - Parallel (Active3 Hat) - Two Displays Side By 
 
 Pi 4 - FM6373 / DP32020B 128x64 64S Example
 
-    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D8 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=5 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=fm6373 --led-spwm-row-addr-type=1 --led-spwm-scan=64 --led-spwm-data-layout=1 --led-spwm-register-config=1
+    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D8 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=5 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=fm6373 --led-spwm-row-addr-type=1 --led-spwm-scan=64 --led-spwm-data-layout=1 --led-spwm-register-config=2
 
 Pi 4 - FM6363 / DP32020A 128x64 Example
 
     taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D8 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=5 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=fm6363 --led-spwm-row-addr-type=1
 
-Pi 4 - ICND1065L 172x86 Example
+Pi 4 - ICND1065L 172x86 43S Example
 
-    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D8 --led-rows=86 --led-cols=172 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=5 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=icnd1065l --led-spwm-row-addr-type=2 --led-spwm-scan=43
+    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D8 --led-rows=86 --led-cols=172 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=5 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=icnd1065l --led-spwm-row-addr-type=2 --led-spwm-scan=43 --led-spwm-register-config=0
 
 This ICND1065L example uploads paired vertical rows because scan 43 is half of
 the 86-row panel height. Full-height data layouts 1/2 do not apply to it.
+
+Pi 4 - ICND1065L 128x64 32S Example
+
+    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D8 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=5 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=icnd1065l --led-spwm-row-addr-type=2 --led-spwm-scan=32 --led-spwm-register-config=2
 
 Pi 4 - SM16380SH 128x64 Example
 
     taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D8 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=3 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=sm16380sh --led-spwm-row-addr-type=0
 
-    ### If you notice any display glitches, you can try an alternative register block --led-spwm-register-config=1
-    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D8 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=3 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=sm16380sh --led-spwm-row-addr-type=0 --led-spwm-register-config=1
+    ### If you notice display glitches, try the preserved former CONFIG1 profile: --led-spwm-register-config=2
+    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D8 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=3 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=sm16380sh --led-spwm-row-addr-type=0 --led-spwm-register-config=2
 
 Pi 3 - FM6373 / DP32020A 128x64 Example
 
@@ -99,13 +107,58 @@ Pi 3 - FM6373 / DP32020A 128x64 Example
 
 Pi 5 - SM16380SH / Shift Register row selector 128x64 Example
 
-    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D3 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=1 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=sm16380sh --led-spwm-row-addr-type=1 --led-rp1-pio=0    
+    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D3 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=1 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=sm16380sh --led-spwm-row-addr-type=1 --led-spwm-register-config=2
 
 Pi 5 - FM6363 / DP32020A 128x64 Example
 
-    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D3 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=0 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=fm6363 --led-spwm-row-addr-type=1 
+    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D3 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=0 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=fm6363 --led-spwm-row-addr-type=1
 
 ---
+
+
+### Find Your Optimum Register Config
+
+Each SPWM display will have register values that work best with it. Demo 15 loads the selected display's complete runtime profile catalog into memory so you can test through it without compiling every register config into the library. The catalogs are stored under `lib/spwm/registertest/data`; set `SPWM_PROFILE_DIR` when they are deployed elsewhere.
+
+Run the demo -D15 test, example:
+
+    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D15 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=5 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=sm16380sh --led-spwm-row-addr-type=1
+
+This test shows the color gradient by default.
+Alternatively add\
+`--register-test-pattern=align` to hold the Demo 15 alignment scene or\
+`--register-test-pattern=cycle` to alternate both scenes every few seconds.
+
+Add `--register-test-scan=32` to visit only profiles tagged for 1/32 scan, or
+pass a comma-separated set such as\
+`--register-test-scan=64,32,16,8`
+
+This is a profile filter only; use `--led-spwm-scan` separately to set the panel's active scan row count.
+
+**LEFT/RIGHT** changes profile and `M` toggles a good-profile mark. Enter locks the
+marked set, after which LEFT/RIGHT browses only those finalists. Stopping before
+or after Enter prints the confirmed active profile and copy-pasteable force-register CLI options.
+
+Once you find a good register profile you can either use it by adding the number to the command line e.g\
+`--led-spwm-register-config=N`
+
+Alternatively you can add register values manually. Further details on how will display at the end of the -demo -D15 test.
+
+Rotating RGB Register Profiles
+
+Unnumbered option selects the panel profile's rotating RGB register; the
+numbered form explicitly selects slot 3.
+
+`--led-spwm-force-register="R:<red words>;G:<green words>;B:<blue words>"`\
+`--led-spwm-force-register3="R:<red words>;G:<green words>;B:<blue words>"`
+
+Fixed Profiles
+
+`--led-spwm-force-register1=0x1fb0`\
+`--led-spwm-force-register2="R:0xf39c;G:0xe79c;B:0xd79c"`
+
+---
+
 
 **Below are a list of environment variables that can be entered at the beginning of the command to tweak the settings.**
 

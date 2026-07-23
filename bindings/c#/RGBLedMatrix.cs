@@ -31,9 +31,20 @@ public class RGBLedMatrix : IDisposable
     public RGBLedMatrix(RGBLedMatrixOptions options)
     {
         InternalRGBLedMatrixOptions opt = default;
+        IntPtr[] spwmForceRegisterAllocations = Array.Empty<IntPtr>();
         try
         {
             opt = new(options);
+            spwmForceRegisterAllocations = new[]
+            {
+                opt.spwm_force_register,
+                opt.spwm_force_register1,
+                opt.spwm_force_register2,
+                opt.spwm_force_register3,
+                opt.spwm_force_register4,
+                opt.spwm_force_register5,
+                opt.spwm_force_register6,
+            };
             var args = Environment.GetCommandLineArgs();
 
             // Because gpio-slowdown is not provided in the options struct,
@@ -65,6 +76,10 @@ public class RGBLedMatrix : IDisposable
             if (options.LedRgbSequence is not null) Marshal.FreeHGlobal(opt.led_rgb_sequence);
             if (options.PixelMapperConfig is not null) Marshal.FreeHGlobal(opt.pixel_mapper_config);
             if (options.PanelType is not null) Marshal.FreeHGlobal(opt.panel_type);
+            foreach (IntPtr allocation in spwmForceRegisterAllocations)
+            {
+                if (allocation != IntPtr.Zero) Marshal.FreeHGlobal(allocation);
+            }
         }
     }
 
@@ -80,7 +95,8 @@ public class RGBLedMatrix : IDisposable
     /// <summary>
     /// Reset native framebuffer globals so that GPIO/row-address state will be
     /// reinitialized on the next matrix creation. Useful when changing
-    /// hardware-mapping critical options at runtime.
+    /// hardware-mapping critical options between matrix instances. Dispose all
+    /// matrices first; no native refresh thread may be active during this call.
     /// </summary>
     public static void ResetFramebufferGlobals() => framebuffer_reset_globals();
 

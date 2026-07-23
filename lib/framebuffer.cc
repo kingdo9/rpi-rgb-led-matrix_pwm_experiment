@@ -634,14 +634,21 @@ static void InitFM6127(GPIO *io, const struct HardwareMapping &h, int columns) {
                                               int spwm_scan_rows,
                                               int spwm_data_layout,
                                               int spwm_register_config,
-                                              int multiplexing) {
+                                              int multiplexing,
+                                              const char *spwm_force_register,
+                                              const char *const *
+                                                  spwm_force_registers,
+                                              size_t spwm_force_register_count) {
   const bool spwm_panel_handled =
       spwm_initialize_panel_type(panel_type, columns, panel_columns,
                                  spwm_row_address_type,
                                  spwm_scan_rows,
                                  spwm_data_layout,
                                  spwm_register_config,
-                                 multiplexing);
+                                 multiplexing,
+                                 spwm_force_register,
+                                 spwm_force_registers,
+                                 spwm_force_register_count);
 
   if (!panel_type || panel_type[0] == '\0') return;
   if (Rp1BackendInitializePanelsIfActive(*hardware_mapping_, panel_type,

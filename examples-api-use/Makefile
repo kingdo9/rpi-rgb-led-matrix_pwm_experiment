@@ -2,7 +2,8 @@ include ../config.mk
 
 CFLAGS=-Wall -O3 $(CPU_ARCH_FLAGS) $(LTO_FLAGS) -g -Wextra -Wno-unused-parameter
 CXXFLAGS=$(CFLAGS)
-OBJECTS=demo-main.o minimal-example.o c-example.o text-example.o scrolling-text-example.o clock.o ledcat.o input-example.o pixel-mover.o
+SPWM_REGISTER_TEST_OBJECT=spwm-register-test.o
+OBJECTS=demo-main.o $(SPWM_REGISTER_TEST_OBJECT) minimal-example.o c-example.o text-example.o scrolling-text-example.o clock.o ledcat.o input-example.o pixel-mover.o
 BINARIES=demo minimal-example c-example text-example scrolling-text-example clock ledcat input-example pixel-mover
 
 # Where our library resides. You mostly only need to change the
@@ -12,6 +13,7 @@ RGB_INCDIR=$(RGB_LIB_DISTRIBUTION)/include
 RGB_LIBDIR=$(RGB_LIB_DISTRIBUTION)/lib
 RGB_LIBRARY_NAME=rgbmatrix
 RGB_LIBRARY=$(RGB_LIBDIR)/lib$(RGB_LIBRARY_NAME).a
+SPWM_REGISTER_TEST_DIR=$(RGB_LIBDIR)/spwm/registertest
 LDFLAGS+=$(CPU_ARCH_FLAGS) $(LTO_FLAGS) -L$(RGB_LIBDIR) -l$(RGB_LIBRARY_NAME) -lrt -lm -lpthread
 
 # To compile image-example
@@ -23,8 +25,22 @@ all : $(BINARIES)
 $(RGB_LIBRARY): FORCE
 	$(MAKE) -C $(RGB_LIBDIR)
 
-demo : demo-main.o $(RGB_LIBRARY)
-	$(CXX) $< -o $@ $(LDFLAGS)
+# Demo 15 uses internal refresh-thread profile hooks, but its interactive UI
+# object stays linked only into the demo binary rather than the core library.
+demo : demo-main.o $(SPWM_REGISTER_TEST_OBJECT) $(RGB_LIBRARY)
+	$(CXX) demo-main.o $(SPWM_REGISTER_TEST_OBJECT) -o $@ $(LDFLAGS)
+
+demo-main.o: $(SPWM_REGISTER_TEST_DIR)/spwm-register-test.h
+demo-main.o: CXXFLAGS+=-I$(RGB_LIBDIR)
+
+$(SPWM_REGISTER_TEST_OBJECT): \
+	$(SPWM_REGISTER_TEST_DIR)/spwm-register-test.cc \
+	$(SPWM_REGISTER_TEST_DIR)/spwm-register-test.h \
+	$(SPWM_REGISTER_TEST_DIR)/spwm-register-profile-loader.h \
+	$(RGB_INCDIR)/graphics.h \
+	$(RGB_INCDIR)/led-matrix.h \
+	$(RGB_LIBDIR)/spwm-helpers.h
+	$(CXX) -I$(RGB_INCDIR) -I$(RGB_LIBDIR) $(CXXFLAGS) -c -o $@ $<
 
 minimal-example : minimal-example.o
 input-example : input-example.o

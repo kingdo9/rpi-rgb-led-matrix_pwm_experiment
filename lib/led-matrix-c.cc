@@ -93,6 +93,13 @@ static struct RGBLedMatrix *led_matrix_create_from_options_optional_edit(
     OPT_COPY_IF_SET(panel_type);
     OPT_COPY_IF_SET(limit_refresh_rate_hz);
     OPT_COPY_IF_SET(disable_busy_waiting);
+    OPT_COPY_IF_SET(spwm_force_register);
+    OPT_COPY_IF_SET(spwm_force_register1);
+    OPT_COPY_IF_SET(spwm_force_register2);
+    OPT_COPY_IF_SET(spwm_force_register3);
+    OPT_COPY_IF_SET(spwm_force_register4);
+    OPT_COPY_IF_SET(spwm_force_register5);
+    OPT_COPY_IF_SET(spwm_force_register6);
 #undef OPT_COPY_IF_SET
   }
 
@@ -145,6 +152,13 @@ static struct RGBLedMatrix *led_matrix_create_from_options_optional_edit(
     ACTUAL_VALUE_BACK_TO_OPT(panel_type);
     ACTUAL_VALUE_BACK_TO_OPT(limit_refresh_rate_hz);
     ACTUAL_VALUE_BACK_TO_OPT(disable_busy_waiting);
+    ACTUAL_VALUE_BACK_TO_OPT(spwm_force_register);
+    ACTUAL_VALUE_BACK_TO_OPT(spwm_force_register1);
+    ACTUAL_VALUE_BACK_TO_OPT(spwm_force_register2);
+    ACTUAL_VALUE_BACK_TO_OPT(spwm_force_register3);
+    ACTUAL_VALUE_BACK_TO_OPT(spwm_force_register4);
+    ACTUAL_VALUE_BACK_TO_OPT(spwm_force_register5);
+    ACTUAL_VALUE_BACK_TO_OPT(spwm_force_register6);
 #undef ACTUAL_VALUE_BACK_TO_OPT
   }
 

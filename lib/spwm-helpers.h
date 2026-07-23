@@ -49,6 +49,15 @@ enum SPWM_Data_Layout {
   SPWM_DATA_LAYOUT_FULL_HEIGHT_LEFT_RGB1 = 2,
 };
 
+// The current SPWM profiles expose at most six 1-based register slots.
+constexpr size_t SPWM_FORCE_REGISTER_COUNT = 6;
+
+enum SPWM_Register_Slot_Type {
+  SPWM_REGISTER_SLOT_NONE = 0,
+  SPWM_REGISTER_SLOT_FIXED,
+  SPWM_REGISTER_SLOT_RGB,
+};
+
 struct SPWM_Panel_Settings {
   static const int kMaxMissingColumnSlots = 4;
 
@@ -106,12 +115,74 @@ struct SPWM_Register_Data {
   SPWM_Register_Timing timing;
 };
 
-// One R/G/B word triple emitted by a panel's rotating RGB register block.
+// One R/G/B word triple emitted on the panel's color data lanes.
 struct SPWM_RGB_Frame {
   uint16_t r;
   uint16_t g;
   uint16_t b;
 };
+
+// Non-owning view of one diagnostic RGB register profile. The view and its
+// channel arrays must remain valid and unchanged for the lifetime of the
+// process.
+struct SPWM_RGB_Register_Profile_View {
+  const char *name;
+  size_t register_index;
+  const uint16_t *channel_words[3];
+  size_t channel_word_counts[3];
+};
+
+// Structurally validate and queue a diagnostic profile for the refresh thread
+// to apply at the next init-sequence boundary. Compatibility with the active
+// panel slot is checked on that thread. Only one pending request is supported;
+// a later request replaces it without publishing a superseded result. Status
+// is identified by profile pointer, not by a per-request generation, so
+// requeueing the current last-emitted pointer is not a fresh acknowledgement.
+bool spwm_request_rgb_register_profile(
+    const SPWM_RGB_Register_Profile_View *profile);
+
+// Return the most recent queued profile whose complete rotating sequence was
+// emitted by completed panel init sequences, or nullptr if none has completed.
+const SPWM_RGB_Register_Profile_View *
+spwm_get_last_emitted_rgb_register_profile();
+
+// Return the rejection result for the latest RGB request. A structurally valid
+// new request clears this first, so nullptr means no latest rejection is known.
+const SPWM_RGB_Register_Profile_View *
+spwm_get_last_rejected_rgb_register_profile();
+
+// One fixed register slot with its physical red, green, and blue lane words.
+// RCFGX packages can configure these lanes differently even though the slot is
+// emitted once per init sequence rather than as a rotating register block.
+struct SPWM_Fixed_Register_Profile_Entry {
+  size_t register_index;
+  uint16_t channel_words[3];
+};
+
+// Non-owning view of one diagnostic fixed-register profile. The view and its
+// entries must remain valid and unchanged for the lifetime of the process.
+struct SPWM_Fixed_Register_Profile_View {
+  const char *name;
+  const SPWM_Fixed_Register_Profile_Entry *entries;
+  size_t entry_count;
+};
+
+// Structurally validate and queue a fixed-register profile for the refresh
+// thread. Every entry must also correspond to a fixed slot emitted by the
+// active panel's init sequence; that compatibility is checked on the thread.
+// It has the same one-pending-request and pointer-status limits as RGB profiles.
+bool spwm_request_fixed_register_profile(
+    const SPWM_Fixed_Register_Profile_View *profile);
+
+// Return the most recent queued fixed profile whose selected registers were
+// all emitted by a completed panel init sequence.
+const SPWM_Fixed_Register_Profile_View *
+spwm_get_last_emitted_fixed_register_profile();
+
+// Return the rejection result for the latest fixed request. A structurally
+// valid new request clears this first, so nullptr means no rejection is known.
+const SPWM_Fixed_Register_Profile_View *
+spwm_get_last_rejected_fixed_register_profile();
 
 // Owns the per-panel register upload data and the per-frame RGB sequence state.
 class SPWM_Config {
@@ -121,6 +192,14 @@ class SPWM_Config {
   SPWM_Config(size_t spwm_register_count,
               const SPWM_Register_Timing &spwm_default_timing,
               size_t spwm_register_repeat_count);
+
+  // register_data_ points into register_words_, so copying would leave the
+  // copied views pointing at the source object. Moving transfers the owning
+  // vectors and their views together.
+  SPWM_Config(const SPWM_Config &) = delete;
+  SPWM_Config &operator=(const SPWM_Config &) = delete;
+  SPWM_Config(SPWM_Config &&) = default;
+  SPWM_Config &operator=(SPWM_Config &&) = default;
 
   // Return the static payload for a 1-based register slot, or nullptr if the
   // slot is invalid.
@@ -136,6 +215,37 @@ class SPWM_Config {
       size_t spwm_register_index,
       const std::array<std::vector<uint16_t>, 3> &spwm_channel_sequences,
       const SPWM_Register_Timing &spwm_timing);
+
+  // Replace every rotating RGB register with one shared sequence while
+  // preserving each register slot's panel-specific latch timing.
+  bool spwm_force_rgb_register_words(
+      const std::vector<uint16_t> &spwm_words);
+
+  // Replace every rotating RGB register with distinct, equally sized channel
+  // sequences while preserving each register slot's latch timing.
+  bool spwm_force_rgb_register_words(
+      const std::array<std::vector<uint16_t>, 3> &spwm_channel_sequences);
+
+  // Replace one existing register slot without changing whether the profile
+  // treats it as fixed or as a rotating RGB sequence.
+  bool spwm_force_register_words(
+      size_t spwm_register_index,
+      const std::vector<uint16_t> &spwm_words);
+
+  // Replace one rotating RGB slot with distinct, equally sized channel
+  // sequences without changing its panel-specific latch timing.
+  bool spwm_force_register_rgb_words(
+      size_t spwm_register_index,
+      const std::array<std::vector<uint16_t>, 3> &spwm_channel_sequences);
+
+  // Replace one existing fixed slot with distinct words for the physical
+  // red, green, and blue data lanes while preserving its latch timing.
+  bool spwm_force_fixed_register_rgb_words(
+      size_t spwm_register_index, const uint16_t spwm_channel_words[3]);
+
+  // Return the channel-specific override for a fixed slot.
+  bool spwm_get_fixed_register_rgb_frame(
+      size_t spwm_register_index, SPWM_RGB_Frame *spwm_rgb_frame) const;
 
   // Return true when the given register slot is backed by a rotating RGB
   // sequence instead of a fixed payload.
@@ -160,6 +270,8 @@ class SPWM_Config {
       const std::vector<uint16_t> &spwm_words) const;
 
   struct SPWM_RGB_Register {
+    // The cursor advances once per RGB-register init step, allowing a long
+    // register block to rotate across consecutive panel init sequences.
     bool present = false;
     std::array<std::vector<uint16_t>, 3> channel_sequences{};
     size_t sequence_index = 0;
@@ -167,15 +279,43 @@ class SPWM_Config {
     SPWM_Register_Timing timing = {nullptr, 0, 0};
   };
 
+  struct SPWM_Fixed_RGB_Register {
+    // Channel-specific diagnostic values are a sidecar to the normal fixed
+    // payload, whose word count and latch timing remain authoritative.
+    bool present = false;
+    SPWM_RGB_Frame frame = {0, 0, 0};
+  };
+
   SPWM_Register_Timing default_timing_;
   size_t register_repeat_count_;
   std::vector<std::vector<uint16_t> > register_words_;
   std::vector<SPWM_Register_Data> register_data_;
   std::vector<SPWM_RGB_Register> rgb_registers_;
+  std::vector<SPWM_Fixed_RGB_Register> fixed_rgb_registers_;
 };
 
 // Return true when `panel_type` matches one of the built-in SPWM panel profiles.
 bool spwm_is_panel_type(const char *panel_type);
+
+// Return true when the selected panel profile has a rotating RGB register
+// block that --led-spwm-force-register can replace.
+bool spwm_panel_supports_forced_register(const char *panel_type);
+
+// Return the selected profile's type for a 1-based register slot.
+SPWM_Register_Slot_Type spwm_get_panel_register_slot_type(
+    const char *panel_type, size_t spwm_register_index);
+
+// Parse a non-empty comma-separated sequence of 16-bit C-style integer words.
+// Whitespace, including newlines, is allowed around values and commas.
+bool spwm_parse_forced_register_words(
+    const char *spwm_value, std::vector<uint16_t> *spwm_words);
+
+// Parse either one shared word list or an RGB-labelled value. Labelled values
+// contain either one channel (copied to all three) or equally sized R/G/B
+// lists, for example "R:0x0000;G:0x0100;B:0x0200".
+bool spwm_parse_forced_rgb_register_words(
+    const char *spwm_value,
+    std::array<std::vector<uint16_t>, 3> *spwm_channel_sequences);
 
 // Return true when this SPWM row-address transport advances rows through the
 // blank-clock scan waveform instead of direct A-E row outputs.
@@ -201,17 +341,23 @@ bool spwm_initialize_panel_type(const char *panel_type, int columns,
                                 int spwm_scan_rows,
                                 int spwm_data_layout,
                                 int spwm_register_config,
-                                int multiplexing);
+                                int multiplexing,
+                                const char *spwm_force_register,
+                                const char *const *spwm_force_registers,
+                                size_t spwm_force_register_count);
 
-// Load the selected panel profile into the runtime state, rebuild any
-// width-dependent register layout, and then apply environment overrides.
+// Load the selected panel profile into the runtime state, apply environment
+// overrides, rebuild its register layout, and apply forced register values.
 void spwm_configure_panel_type(const char *panel_type, int columns,
                                int panel_columns,
                                int spwm_row_address_type,
                                int spwm_scan_rows,
                                int spwm_data_layout,
                                int spwm_register_config,
-                               int multiplexing);
+                               int multiplexing,
+                               const char *spwm_force_register,
+                               const char *const *spwm_force_registers,
+                               size_t spwm_force_register_count);
 
 // Return the currently active panel settings after profile selection and
 // override handling.
@@ -230,7 +376,9 @@ SPWM_Upload_Geometry spwm_resolve_upload_geometry(int rows, int columns,
 // Return whether the framebuffer refresh path is currently using SPWM handling.
 bool spwm_is_enabled();
 
-// Enable or disable SPWM handling in the refresh pipeline.
+// Enable or disable SPWM handling in the refresh pipeline. The refresh thread
+// must be stopped before disabling because teardown also resets its diagnostic
+// profile progress state.
 void spwm_set_enabled(bool spwm_enabled);
 
 // Reset all captured phase-lock timestamps before the refresh loop starts.

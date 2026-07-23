@@ -97,10 +97,61 @@ public struct RGBLedMatrixOptions
     public int SpwmDataLayout = 0;
 
     /// <summary>
-    /// SPWM register payload variant. -1 keeps panel-specific automatic
-    /// selection, while 0 and 1 force known register blocks.
+    /// SPWM register profile. 0 uses the built-in main config; a positive
+    /// value N selects the active panel's runtime catalog regtypeN.
     /// </summary>
     public int SpwmRegisterConfig = -1;
+
+    /// <summary>
+    /// Backward-compatible override for the panel profile's rotating RGB
+    /// register slot. A plain comma-list is applied to all channels. The
+    /// labelled syntax is <c>R:&lt;list&gt;;G:&lt;list&gt;;B:&lt;list&gt;</c>;
+    /// one label is copied to all channels, otherwise all three equal-length
+    /// lists are required.
+    /// </summary>
+    public string? SpwmForceRegister = null;
+
+    /// <summary>
+    /// Overrides SPWM profile register slot 1. Fixed slots accept one shared
+    /// word or <c>R:&lt;word&gt;;G:&lt;word&gt;;B:&lt;word&gt;</c>. Rotating
+    /// slots use the shared or labelled-list syntax described above.
+    /// </summary>
+    public string? SpwmForceRegister1 = null;
+
+    /// <summary>
+    /// Overrides SPWM profile register slot 2. Fixed slots accept one shared
+    /// word or <c>R:&lt;word&gt;;G:&lt;word&gt;;B:&lt;word&gt;</c>. Rotating
+    /// slots use the shared or labelled-list syntax described above.
+    /// </summary>
+    public string? SpwmForceRegister2 = null;
+
+    /// <summary>
+    /// Overrides SPWM profile register slot 3. Fixed slots accept one shared
+    /// word or <c>R:&lt;word&gt;;G:&lt;word&gt;;B:&lt;word&gt;</c>. Rotating
+    /// slots use the shared or labelled-list syntax described above.
+    /// </summary>
+    public string? SpwmForceRegister3 = null;
+
+    /// <summary>
+    /// Overrides SPWM profile register slot 4. Fixed slots accept one shared
+    /// word or <c>R:&lt;word&gt;;G:&lt;word&gt;;B:&lt;word&gt;</c>. Rotating
+    /// slots use the shared or labelled-list syntax described above.
+    /// </summary>
+    public string? SpwmForceRegister4 = null;
+
+    /// <summary>
+    /// Overrides SPWM profile register slot 5. Fixed slots accept one shared
+    /// word or <c>R:&lt;word&gt;;G:&lt;word&gt;;B:&lt;word&gt;</c>. Rotating
+    /// slots use the shared or labelled-list syntax described above.
+    /// </summary>
+    public string? SpwmForceRegister5 = null;
+
+    /// <summary>
+    /// Overrides SPWM profile register slot 6. Fixed slots accept one shared
+    /// word or <c>R:&lt;word&gt;;G:&lt;word&gt;;B:&lt;word&gt;</c>. Rotating
+    /// slots use the shared or labelled-list syntax described above.
+    /// </summary>
+    public string? SpwmForceRegister6 = null;
 
     /// <summary>
     /// Type of multiplexing.

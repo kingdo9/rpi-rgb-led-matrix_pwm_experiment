@@ -9,6 +9,7 @@
 
 #include "pixel-mapper.h"
 #include "graphics.h"
+#include "spwm/registertest/spwm-register-test.h"
 
 #include <assert.h>
 #include <getopt.h>
@@ -34,6 +35,23 @@ using namespace rgb_matrix;
 volatile bool interrupt_received = false;
 static void InterruptHandler(int signo) {
   interrupt_received = true;
+}
+
+// Parse Demo 15's three presentation modes; register navigation remains manual
+// and independent of which scene is selected.
+static bool ParseRegisterTestPattern(
+    const char *value, internal::SPWM_Register_Test_Pattern *pattern) {
+  if (value == NULL || pattern == NULL) return false;
+  if (strcmp(value, "gradient") == 0) {
+    *pattern = internal::SPWM_REGISTER_TEST_PATTERN_GRADIENT;
+  } else if (strcmp(value, "align") == 0) {
+    *pattern = internal::SPWM_REGISTER_TEST_PATTERN_ALIGN;
+  } else if (strcmp(value, "cycle") == 0) {
+    *pattern = internal::SPWM_REGISTER_TEST_PATTERN_CYCLE;
+  } else {
+    return false;
+  }
+  return true;
 }
 
 class DemoRunner {
@@ -293,6 +311,33 @@ public:
       usleep(100 * 1000);
     }
   }
+};
+
+// Adapt the separate SPWM diagnostic module to the demo program's DemoRunner
+// interface. Profile synchronization, input, and stop reporting stay out of
+// this already crowded demo dispatcher.
+class SPWMRegisterTestDemo : public DemoRunner {
+public:
+  SPWMRegisterTestDemo(RGBMatrix *m, const char *panel_type,
+                       internal::SPWM_Register_Test_Pattern pattern,
+                       uint64_t scan_filter)
+      : DemoRunner(m), matrix_(m), panel_type_(panel_type), pattern_(pattern),
+        scan_filter_(scan_filter), succeeded_(false) {}
+  void Run() override {
+    succeeded_ = internal::RunSPWMRegisterTest(
+        matrix_, panel_type_, pattern_, scan_filter_, &interrupt_received,
+        &result_);
+  }
+  bool succeeded() const { return succeeded_; }
+  const internal::SPWM_Register_Test_Result &result() const { return result_; }
+
+private:
+  RGBMatrix *const matrix_;
+  const char *const panel_type_;
+  const internal::SPWM_Register_Test_Pattern pattern_;
+  const uint64_t scan_filter_;
+  bool succeeded_;
+  internal::SPWM_Register_Test_Result result_;
 };
 
 class MovingLine : public DemoRunner {
@@ -1253,6 +1298,11 @@ static int usage(const char *progname) {
   fprintf(stderr, "Options:\n");
   fprintf(stderr,
           "\t-D <demo-nr>              : Always needs to be set\n"
+          "\t--register-test-pattern=<gradient|align|cycle>\n"
+          "\t                          : Demo 15 test pattern (Default: gradient)\n"
+          "\t--register-test-scan=<all|rows[,rows...]>\n"
+          "\t                          : Demo 15 scan filter, e.g. 32 or "
+          "1/32,1/16 (Default: all)\n"
           );
 
 
@@ -1273,15 +1323,34 @@ static int usage(const char *progname) {
           "\t11 - Brightness pulse generator\n"
           "\t12 - Colorful rotating 3d cube [direct|swap]\n"
           "\t13 - Moving vertical, horizontal, and diagonal lines [direct|swap] (-m <time-step-ms>)\n"
-          "\t14 - Single red pixel at x=64, y=height/2\n");
+          "\t14 - Single red pixel at x=64, y=height/2\n"
+          "\t15 - FM6373/FM6363/FM6353/ICND1065L/SM16380SH register profile test "
+          "(arrows navigate, M marks, ENTER locks finalists)\n");
   fprintf(stderr, "Example:\n\t%s -D 1 runtext.ppm\n"
           "Scrolls the runtext until Ctrl-C is pressed\n", progname);
   return 1;
 }
 
 int main(int argc, char *argv[]) {
+  enum {
+    OPT_REGISTER_TEST_PATTERN = 1000,
+    OPT_REGISTER_TEST_SCAN,
+  };
+  static const struct option long_options[] = {
+      {"register-test-pattern", required_argument, NULL,
+       OPT_REGISTER_TEST_PATTERN},
+      {"register-test-scan", required_argument, NULL,
+       OPT_REGISTER_TEST_SCAN},
+      {NULL, 0, NULL, 0},
+  };
+
   int demo = -1;
   int scroll_ms = 30;
+  internal::SPWM_Register_Test_Pattern register_test_pattern =
+      internal::SPWM_REGISTER_TEST_PATTERN_GRADIENT;
+  bool register_test_pattern_set = false;
+  uint64_t register_test_scan_filter = 0;
+  bool register_test_scan_set = false;
 
   const char *demo_parameter = NULL;
   RGBMatrix::Options matrix_options;
@@ -1299,7 +1368,8 @@ int main(int argc, char *argv[]) {
   }
 
   int opt;
-  while ((opt = getopt(argc, argv, "dD:r:P:c:p:b:m:LR:")) != -1) {
+  while ((opt = getopt_long(argc, argv, "dD:r:P:c:p:b:m:LR:",
+                            long_options, NULL)) != -1) {
     switch (opt) {
     case 'D':
       demo = atoi(optarg);
@@ -1307,6 +1377,28 @@ int main(int argc, char *argv[]) {
 
     case 'm':
       scroll_ms = atoi(optarg);
+      break;
+
+    case OPT_REGISTER_TEST_PATTERN:
+      register_test_pattern_set = true;
+      if (!ParseRegisterTestPattern(optarg, &register_test_pattern)) {
+        fprintf(stderr,
+                TERM_ERR "--register-test-pattern must be 'gradient', "
+                         "'align', or 'cycle'.\n" TERM_NORM);
+        return usage(argv[0]);
+      }
+      break;
+
+    case OPT_REGISTER_TEST_SCAN:
+      register_test_scan_set = true;
+      if (!internal::ParseSPWMRegisterTestScanFilter(
+              optarg, &register_test_scan_filter)) {
+        fprintf(stderr,
+                TERM_ERR "--register-test-scan must be 'all', a scan row "
+                         "count from 1 to 64, or a comma-separated list "
+                         "such as '1/32,1/16'.\n" TERM_NORM);
+        return usage(argv[0]);
+      }
       break;
 
     default: /* '?' */
@@ -1323,6 +1415,29 @@ int main(int argc, char *argv[]) {
     return usage(argv[0]);
   }
 
+  if (register_test_pattern_set && demo != 15) {
+    fprintf(stderr,
+            TERM_ERR "--register-test-pattern is only available with "
+                     "-D 15.\n" TERM_NORM);
+    return usage(argv[0]);
+  }
+
+  if (register_test_scan_set && demo != 15) {
+    fprintf(stderr,
+            TERM_ERR "--register-test-scan is only available with "
+                     "-D 15.\n" TERM_NORM);
+    return usage(argv[0]);
+  }
+
+  if (demo == 15 &&
+      !internal::SupportsSPWMRegisterTest(matrix_options.panel_type)) {
+    fprintf(stderr,
+            TERM_ERR "Demo 15 requires --led-panel-type=fm6373, fm6363, "
+                     "fm6353, icnd1065l, or sm16380sh"
+                     TERM_NORM " (suffixed variants are also accepted).\n");
+    return 1;
+  }
+
   RGBMatrix *matrix = RGBMatrix::CreateFromOptions(matrix_options, runtime_opt);
   if (matrix == NULL)
     return 1;
@@ -1335,6 +1450,7 @@ int main(int argc, char *argv[]) {
   // The DemoRunner objects are filling
   // the matrix continuously.
   DemoRunner *demo_runner = NULL;
+  SPWMRegisterTestDemo *register_test_demo = NULL;
   switch (demo) {
     case 0:
       demo_runner = new RotatingBlockGenerator(canvas);
@@ -1430,6 +1546,14 @@ int main(int argc, char *argv[]) {
     case 14:
       demo_runner = new SingleRedPixel(canvas);
       break;
+
+    case 15:
+      register_test_demo =
+          new SPWMRegisterTestDemo(matrix, matrix_options.panel_type,
+                                   register_test_pattern,
+                                   register_test_scan_filter);
+      demo_runner = register_test_demo;
+      break;
   }
 
   if (demo_runner == NULL)
@@ -1445,10 +1569,25 @@ int main(int argc, char *argv[]) {
 
   // Now, run our particular demo; it will exit when it sees interrupt_received.
   demo_runner->Run();
+  const bool demo_succeeded =
+      register_test_demo == NULL || register_test_demo->succeeded();
+  internal::SPWM_Register_Test_Result register_test_result;
+  if (register_test_demo != NULL) {
+    register_test_result = register_test_demo->result();
+  }
 
   delete demo_runner;
   delete canvas;
 
-  printf("Received CTRL-C. Exiting.\n");
-  return 0;
+  if (demo == 15) {
+    // Matrix teardown stops the refresh thread before the final selector is
+    // printed, so refresh diagnostics cannot interleave with or follow it.
+    internal::PrintSPWMRegisterTestResult(matrix_options.panel_type,
+                                          register_test_result);
+  } else {
+    printf("%s\n", interrupt_received
+                       ? "Received interrupt. Exiting."
+                       : "Demo finished. Exiting.");
+  }
+  return demo_succeeded ? 0 : 1;
 }

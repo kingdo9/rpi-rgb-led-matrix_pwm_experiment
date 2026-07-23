@@ -8,6 +8,10 @@ include(CMakePrintHelpers) # so we can print cmake variable values, useful for d
 include(GNUInstallDirs)  # so that `CMAKE_INSTALL_LIBDIR` is not blank
 find_package(Python 3.11 REQUIRED COMPONENTS Interpreter Development.Module Development.Embed)
 
+file(RELATIVE_PATH RGBMATRIX_SPWM_PROFILE_MODULE_DATA_DIR
+    "${CMAKE_INSTALL_FULL_LIBDIR}"
+    "${CMAKE_INSTALL_FULL_DATADIR}/rgbmatrix/spwm/registertest")
+
 # Build the core library
 # Set some convenience variables
 set(RGBMATRIX_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/include)
@@ -49,6 +53,7 @@ set(RGBMATRIX_SOURCES
     ${RGBMATRIX_SOURCE_DIR}/spwm-helpers.cc
     ${RGBMATRIX_SOURCE_DIR}/spwm-panel-config.cc
     ${RGBMATRIX_SOURCE_DIR}/spwm-panel-registers.cc
+    ${RGBMATRIX_SOURCE_DIR}/spwm/registertest/spwm-register-profile-loader.cc
     ${RGBMATRIX_SOURCE_DIR}/thread.cc
 )
 cmake_print_variables(RGBMATRIX_SOURCES)
@@ -66,9 +71,18 @@ target_include_directories(rgbmatrix PRIVATE
     ${RGBMATRIX_RP1_PIO_VENDOR_DIR}/piolib/include
     ${RGBMATRIX_RP1_PIO_VENDOR_DIR}/include
 )
+target_compile_definitions(rgbmatrix PRIVATE
+    RGBMATRIX_SPWM_PROFILE_MODULE_RELATIVE=1
+    _GNU_SOURCE
+    RGBMATRIX_SPWM_PROFILE_MODULE_DATA_DIR="${RGBMATRIX_SPWM_PROFILE_MODULE_DATA_DIR}"
+    RGBMATRIX_SPWM_PROFILE_DATA_DIR="${CMAKE_INSTALL_FULL_DATADIR}/rgbmatrix/spwm/registertest")
+target_link_libraries(rgbmatrix PRIVATE ${CMAKE_DL_LIBS})
 
 # Install location changes depending if called by scikit-build-core
 install(TARGETS rgbmatrix DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(
+    DIRECTORY ${RGBMATRIX_SOURCE_DIR}/spwm/registertest/data/
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/rgbmatrix/spwm/registertest)
 
 # Build the python bindings if called by scikit-build-core
 IF(DEFINED SKBUILD)
@@ -108,6 +122,10 @@ IF(DEFINED SKBUILD)
         ${RGBMATRIX_RP1_PIO_VENDOR_DIR}/piolib/include
         ${RGBMATRIX_RP1_PIO_VENDOR_DIR}/include
     )
+    target_compile_definitions(core PRIVATE
+        RGBMATRIX_SPWM_PROFILE_MODULE_RELATIVE=1
+        _GNU_SOURCE)
+    target_link_libraries(core PRIVATE ${CMAKE_DL_LIBS})
     # target_link_libraries(core PRIVATE rgbmatrix)
     # target_link_options(core PRIVATE $<$<CXX_COMPILER_ID:GNU>:-Wl,--whole-archive>)
     set_property(TARGET core PROPERTY PREFIX "")
@@ -125,10 +143,17 @@ IF(DEFINED SKBUILD)
         ${RGBMATRIX_RP1_PIO_VENDOR_DIR}/piolib/include
         ${RGBMATRIX_RP1_PIO_VENDOR_DIR}/include
     )
+    target_compile_definitions(graphics PRIVATE
+        RGBMATRIX_SPWM_PROFILE_MODULE_RELATIVE=1
+        _GNU_SOURCE)
+    target_link_libraries(graphics PRIVATE ${CMAKE_DL_LIBS})
     # target_link_libraries(graphics PRIVATE rgbmatrix)
     # target_link_options(graphics PRIVATE $<$<CXX_COMPILER_ID:GNU>:-Wl,--whole-archive>)
     set_property(TARGET graphics PROPERTY PREFIX "")
 
     install(TARGETS core graphics DESTINATION ${SKBUILD_PROJECT_NAME})
     install(FILES "${PROJECT_SOURCE_DIR}/bindings/python/rgbmatrix/__init__.py" DESTINATION ${SKBUILD_PROJECT_NAME})
+    install(
+        DIRECTORY ${RGBMATRIX_SOURCE_DIR}/spwm/registertest/data/
+        DESTINATION ${SKBUILD_PROJECT_NAME}/spwm/registertest)
 endif()

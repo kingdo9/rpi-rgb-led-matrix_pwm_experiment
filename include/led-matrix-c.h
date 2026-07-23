@@ -138,8 +138,8 @@ struct RGBLedMatrixOptions {
    */
   int spwm_data_layout;  /* Corresponding flag: --led-spwm-data-layout */
 
-  /* SPWM register payload variant. -1 keeps panel-specific automatic
-   * selection; 0 and 1 force known register blocks.
+  /* SPWM register profile. 0 uses the main config; a positive
+   * value N selects the active panel's runtime catalog regtypeN.
    */
   int spwm_register_config;  /* Corresponding flag: --led-spwm-register-config */
 
@@ -184,6 +184,25 @@ struct RGBLedMatrixOptions {
    * processes when waiting and renders single core boards more responsive.
    */
   bool disable_busy_waiting;     /* Corresponding flag: --led-busy-waiting */
+
+  /* Backward-compatible shortcut for the active SPWM panel profile's rotating
+   * RGB register block. A plain comma-list is applied to R/G/B. The labelled
+   * syntax is R:<list>;G:<list>;B:<list>; one label is copied to all lanes,
+   * otherwise all three equal-length lists are required.
+   */
+  const char *spwm_force_register;  /* Flag: --led-spwm-force-register */
+
+  /* Optional per-slot SPWM register overrides. Fixed slots accept one shared
+   * word or R:<word>;G:<word>;B:<word>. Rotating slots use the shared or
+   * labelled-list syntax above. Unspecified slots keep defaults. The strings
+   * are borrowed through the matrix-creation call.
+   */
+  const char *spwm_force_register1;  /* Flag: --led-spwm-force-register1 */
+  const char *spwm_force_register2;  /* Flag: --led-spwm-force-register2 */
+  const char *spwm_force_register3;  /* Flag: --led-spwm-force-register3 */
+  const char *spwm_force_register4;  /* Flag: --led-spwm-force-register4 */
+  const char *spwm_force_register5;  /* Flag: --led-spwm-force-register5 */
+  const char *spwm_force_register6;  /* Flag: --led-spwm-force-register6 */
 };
 
 /**

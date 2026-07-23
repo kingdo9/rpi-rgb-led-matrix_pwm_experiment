@@ -170,6 +170,48 @@ cdef class RGBMatrixOptions:
         def __get__(self): return self.__options.spwm_register_config
         def __set__(self, int value): self.__options.spwm_register_config = value
 
+    property spwm_force_register:
+        def __get__(self): return self.__options.spwm_force_register
+        def __set__(self, value):
+            self.__py_encoded_spwm_force_register = value.encode('utf-8')
+            self.__options.spwm_force_register = self.__py_encoded_spwm_force_register
+
+    property spwm_force_register1:
+        def __get__(self): return self.__options.spwm_force_register1
+        def __set__(self, value):
+            self.__py_encoded_spwm_force_register1 = value.encode('utf-8')
+            self.__options.spwm_force_register1 = self.__py_encoded_spwm_force_register1
+
+    property spwm_force_register2:
+        def __get__(self): return self.__options.spwm_force_register2
+        def __set__(self, value):
+            self.__py_encoded_spwm_force_register2 = value.encode('utf-8')
+            self.__options.spwm_force_register2 = self.__py_encoded_spwm_force_register2
+
+    property spwm_force_register3:
+        def __get__(self): return self.__options.spwm_force_register3
+        def __set__(self, value):
+            self.__py_encoded_spwm_force_register3 = value.encode('utf-8')
+            self.__options.spwm_force_register3 = self.__py_encoded_spwm_force_register3
+
+    property spwm_force_register4:
+        def __get__(self): return self.__options.spwm_force_register4
+        def __set__(self, value):
+            self.__py_encoded_spwm_force_register4 = value.encode('utf-8')
+            self.__options.spwm_force_register4 = self.__py_encoded_spwm_force_register4
+
+    property spwm_force_register5:
+        def __get__(self): return self.__options.spwm_force_register5
+        def __set__(self, value):
+            self.__py_encoded_spwm_force_register5 = value.encode('utf-8')
+            self.__options.spwm_force_register5 = self.__py_encoded_spwm_force_register5
+
+    property spwm_force_register6:
+        def __get__(self): return self.__options.spwm_force_register6
+        def __set__(self, value):
+            self.__py_encoded_spwm_force_register6 = value.encode('utf-8')
+            self.__options.spwm_force_register6 = self.__py_encoded_spwm_force_register6
+
     property disable_hardware_pulsing:
         def __get__(self): return self.__options.disable_hardware_pulsing
         def __set__(self, value): self.__options.disable_hardware_pulsing = value

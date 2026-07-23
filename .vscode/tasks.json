@@ -79,7 +79,7 @@
             "args": [
                 "bash",
                 "-c",
-                "cp lib/librgbmatrix.so.1 \"${command:extension.commandvariable.file.relativeFileDirnamePosix}/bin/pi-publish/\""
+                "cp lib/librgbmatrix.so.1 lib/spwm/registertest/data/*.profiles \"${command:extension.commandvariable.file.relativeFileDirnamePosix}/bin/pi-publish/\""
             ],
             "problemMatcher": []
         },
@@ -116,7 +116,7 @@
             "args": [
                 "${env:RGBLEDMATRIX_REMOTE_MACHINE}",
                 "cd ${env:RGBLEDMATRIX_REMOTE_DIR}&&",
-                "cp lib/librgbmatrix.so.1 /usr/lib"
+                "cp lib/librgbmatrix.so.1 lib/spwm/registertest/data/*.profiles /usr/lib"
             ],
             "problemMatcher": []
         },
