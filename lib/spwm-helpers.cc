@@ -603,6 +603,7 @@ struct SPWM_RGB_Routing_Context {
   int signal_count;
   gpio_bits_t rgb1_bits[SPWM_MAX_RGB_SIGNAL_COUNT];
   gpio_bits_t rgb2_bits[SPWM_MAX_RGB_SIGNAL_COUNT];
+  gpio_bits_t rgb1_rgb2_bits[SPWM_MAX_RGB_SIGNAL_COUNT];
   bool serial_uses_rgb1;
   bool serial_uses_rgb2;
   bool split_left_uses_rgb2;
@@ -2074,12 +2075,19 @@ SPWM_RGB_Routing_Context spwm_make_rgb_routing_context(
           h.p4_r2, h.p4_g2, h.p4_b2,
           h.p5_r2, h.p5_g2, h.p5_b2,
       },
+      {},
       spwm_data_layout == SPWM_DATA_LAYOUT_FULL_HEIGHT_SERIAL_BOTH ||
           spwm_data_layout == SPWM_DATA_LAYOUT_FULL_HEIGHT_SERIAL_RGB1,
       spwm_data_layout == SPWM_DATA_LAYOUT_FULL_HEIGHT_SERIAL_BOTH ||
           spwm_data_layout == SPWM_DATA_LAYOUT_FULL_HEIGHT_SERIAL_RGB2,
       spwm_data_layout == SPWM_DATA_LAYOUT_FULL_HEIGHT_LEFT_RGB2,
   };
+  for (int spwm_signal = 0; spwm_signal < spwm_context.signal_count;
+       ++spwm_signal) {
+    spwm_context.rgb1_rgb2_bits[spwm_signal] =
+        spwm_context.rgb1_bits[spwm_signal] |
+        spwm_context.rgb2_bits[spwm_signal];
+  }
   return spwm_context;
 }
 
@@ -2101,39 +2109,22 @@ gpio_bits_t spwm_route_selected_row_rgb_bits(
 }
 
 // Full-width serial panels retain the ordinary column stream instead of
-// splitting it into two repeated half-width lanes. Select one physical row
-// from the framebuffer's paired RGB bits, then drive the requested output bus.
-gpio_bits_t spwm_route_selected_row_serial_rgb_bits(
-    gpio_bits_t spwm_out_bits,
-    const gpio_bits_t *spwm_source_bits,
-    const gpio_bits_t *spwm_primary_destination_bits,
-    const gpio_bits_t *spwm_secondary_destination_bits,
-    int spwm_signal_count) {
-  gpio_bits_t spwm_remapped_bits = spwm_route_selected_row_rgb_bits(
-      spwm_out_bits, spwm_source_bits, spwm_primary_destination_bits,
-      spwm_signal_count);
-  if (spwm_secondary_destination_bits != nullptr) {
-    spwm_remapped_bits |= spwm_route_selected_row_rgb_bits(
-        spwm_out_bits, spwm_source_bits, spwm_secondary_destination_bits,
-        spwm_signal_count);
-  }
-  return spwm_remapped_bits;
-}
-
+// splitting it into two repeated half-width lanes. The destination map may
+// contain one output bus or the precombined RGB1|RGB2 bits used by layout 3.
 void spwm_apply_full_height_serial_upload_mapping(
     SPWM_Pixel_Block_GPIO_Bits *spwm_block_gpio_bits,
     const gpio_bits_t *spwm_source_bits,
-    const gpio_bits_t *spwm_primary_destination_bits,
-    const gpio_bits_t *spwm_secondary_destination_bits,
-    int spwm_signal_count) {
+    const gpio_bits_t *spwm_destination_bits,
+    int spwm_signal_count,
+    int spwm_first_populated_word_bit) {
   if (spwm_block_gpio_bits == nullptr) return;
 
-  for (int spwm_bit = 0; spwm_bit < SPWM_WORD_BIT_COUNT; ++spwm_bit) {
+  for (int spwm_bit = spwm_first_populated_word_bit;
+       spwm_bit < SPWM_WORD_BIT_COUNT; ++spwm_bit) {
     spwm_block_gpio_bits->word_gpio_bits[spwm_bit] =
-        spwm_route_selected_row_serial_rgb_bits(
+        spwm_route_selected_row_rgb_bits(
             spwm_block_gpio_bits->word_gpio_bits[spwm_bit],
-            spwm_source_bits, spwm_primary_destination_bits,
-            spwm_secondary_destination_bits, spwm_signal_count);
+            spwm_source_bits, spwm_destination_bits, spwm_signal_count);
   }
 }
 
@@ -2147,10 +2138,12 @@ void spwm_combine_split_double_row_upload_blocks(
     const gpio_bits_t *spwm_source_bits,
     const gpio_bits_t *spwm_left_destination_bits,
     const gpio_bits_t *spwm_right_destination_bits,
-    int spwm_signal_count) {
+    int spwm_signal_count,
+    int spwm_first_populated_word_bit) {
   if (spwm_left_block_gpio_bits == nullptr) return;
 
-  for (int spwm_bit = 0; spwm_bit < SPWM_WORD_BIT_COUNT; ++spwm_bit) {
+  for (int spwm_bit = spwm_first_populated_word_bit;
+       spwm_bit < SPWM_WORD_BIT_COUNT; ++spwm_bit) {
     const gpio_bits_t spwm_left_bits = spwm_route_selected_row_rgb_bits(
         spwm_left_block_gpio_bits->word_gpio_bits[spwm_bit],
         spwm_source_bits, spwm_left_destination_bits, spwm_signal_count);
@@ -2168,10 +2161,10 @@ void spwm_combine_split_double_row_upload_blocks(
 // --led-spwm-scan=43 retain the existing paired-row upload path.
 bool spwm_should_use_full_height_upload(
     const SPWM_Framebuffer_View &spwm_framebuffer_view,
-    int spwm_upload_rows) {
+    int spwm_upload_rows,
+    int spwm_data_layout) {
   const SPWM_Runtime_State &spwm_runtime_state = spwm_get_runtime_state();
   const int spwm_panel_columns = spwm_runtime_state.panel_columns;
-  const int spwm_data_layout = spwm_get_active_data_layout();
   return spwm_data_layout_uses_full_height_rows(spwm_data_layout) &&
          spwm_row_address_type_uses_blank_clock(
              spwm_runtime_state.row_address_type) &&
@@ -2256,6 +2249,8 @@ void spwm_upload_framebuffer_blocks(
     const SPWM_Framebuffer_View &spwm_framebuffer_view,
     gpio_bits_t spwm_rgb_mask,
     int spwm_upload_rows,
+    int spwm_data_layout,
+    bool spwm_full_height_upload,
     int spwm_chip_count,
     int spwm_channels_per_chip,
     SPWM_Block_Emitter spwm_emit_block) {
@@ -2277,10 +2272,12 @@ void spwm_upload_framebuffer_blocks(
       std::max(spwm_framebuffer_view.pwm_low_bit, spwm_first_active_bit);
   const int spwm_active_bits =
       spwm_framebuffer_view.stored_bitplanes - spwm_start_bit;
-  const int spwm_data_layout = spwm_get_active_data_layout();
-  const bool spwm_full_height_upload =
-      spwm_should_use_full_height_upload(spwm_framebuffer_view,
-                                         spwm_upload_rows);
+  const int spwm_clamped_active_bits =
+      std::max(0, std::min(spwm_active_bits, SPWM_WORD_BIT_COUNT));
+  // Repack leaves the leading entries zero. Route only its populated tail;
+  // the emitter still clocks every SPWM word position, including those zeros.
+  const int spwm_first_populated_word_bit =
+      SPWM_WORD_BIT_COUNT - spwm_clamped_active_bits;
   const bool spwm_split_horizontal_lanes =
       spwm_full_height_upload &&
       spwm_data_layout_splits_horizontal_lanes(spwm_data_layout);
@@ -2300,15 +2297,15 @@ void spwm_upload_framebuffer_blocks(
       spwm_routing_context.split_left_uses_rgb2
           ? spwm_routing_context.rgb1_bits
           : spwm_routing_context.rgb2_bits;
-  const gpio_bits_t *const spwm_serial_primary_destination_bits =
-      spwm_routing_context.serial_uses_rgb1
-          ? spwm_routing_context.rgb1_bits
-          : spwm_routing_context.rgb2_bits;
-  const gpio_bits_t *const spwm_serial_secondary_destination_bits =
+  const bool spwm_serial_uses_both =
       spwm_routing_context.serial_uses_rgb1 &&
-              spwm_routing_context.serial_uses_rgb2
-          ? spwm_routing_context.rgb2_bits
-          : nullptr;
+      spwm_routing_context.serial_uses_rgb2;
+  const gpio_bits_t *const spwm_serial_destination_bits =
+      spwm_serial_uses_both
+          ? spwm_routing_context.rgb1_rgb2_bits
+          : (spwm_routing_context.serial_uses_rgb1
+                 ? spwm_routing_context.rgb1_bits
+                 : spwm_routing_context.rgb2_bits);
   const int spwm_split_lane_chain_columns =
       spwm_split_horizontal_lanes
           ? spwm_framebuffer_view.columns / 2
@@ -2382,7 +2379,8 @@ void spwm_upload_framebuffer_blocks(
               &spwm_block_gpio_bits, spwm_right_block_gpio_bits,
               spwm_row_source_bits, spwm_split_left_destination_bits,
               spwm_split_right_destination_bits,
-              spwm_routing_context.signal_count);
+              spwm_routing_context.signal_count,
+              spwm_first_populated_word_bit);
         } else {
           const int spwm_column = spwm_map_physical_column_to_visible(
               spwm_physical_column, spwm_settings);
@@ -2397,9 +2395,9 @@ void spwm_upload_framebuffer_blocks(
             if (spwm_serial_columns) {
               spwm_apply_full_height_serial_upload_mapping(
                   &spwm_block_gpio_bits, spwm_row_source_bits,
-                  spwm_serial_primary_destination_bits,
-                  spwm_serial_secondary_destination_bits,
-                  spwm_routing_context.signal_count);
+                  spwm_serial_destination_bits,
+                  spwm_routing_context.signal_count,
+                  spwm_first_populated_word_bit);
             }
           }
         }
@@ -2426,6 +2424,8 @@ void spwm_upload_framebuffer_direct(
     gpio_bits_t spwm_rgb_mask,
     gpio_bits_t spwm_data_mask,
     int spwm_upload_rows,
+    int spwm_data_layout,
+    bool spwm_full_height_upload,
     int spwm_chip_count,
     int spwm_channels_per_chip,
     int spwm_word_bits,
@@ -2462,7 +2462,8 @@ void spwm_upload_framebuffer_direct(
 
   spwm_upload_framebuffer_blocks(
       io, h, spwm_framebuffer_view, spwm_rgb_mask, spwm_upload_rows,
-      spwm_chip_count, spwm_channels_per_chip,
+      spwm_data_layout, spwm_full_height_upload, spwm_chip_count,
+      spwm_channels_per_chip,
       [&](const SPWM_Pixel_Block_GPIO_Bits &spwm_block_gpio_bits,
           bool spwm_is_last_chip) {
         for (int spwm_bit = spwm_word_bits - 1; spwm_bit >= 0; --spwm_bit) {
@@ -2559,6 +2560,8 @@ void spwm_upload_framebuffer_shiftreg(
     gpio_bits_t spwm_rgb_mask,
     gpio_bits_t spwm_data_mask,
     int spwm_upload_rows,
+    int spwm_data_layout,
+    bool spwm_full_height_upload,
     int spwm_scan_rows,
     int spwm_chip_count,
     int spwm_channels_per_chip,
@@ -2595,7 +2598,8 @@ void spwm_upload_framebuffer_shiftreg(
 
   spwm_upload_framebuffer_blocks(
       io, h, spwm_framebuffer_view, spwm_rgb_mask, spwm_upload_rows,
-      spwm_chip_count, spwm_channels_per_chip,
+      spwm_data_layout, spwm_full_height_upload, spwm_chip_count,
+      spwm_channels_per_chip,
       [&](const SPWM_Pixel_Block_GPIO_Bits &spwm_block_gpio_bits,
           bool spwm_is_last_chip) {
         for (int spwm_bit = spwm_word_bits - 1; spwm_bit >= 0; --spwm_bit) {
@@ -3427,14 +3431,16 @@ void spwm_dump_to_matrix(GPIO *io, const HardwareMapping &h,
   const int spwm_effective_scan_rows =
       spwm_get_effective_scan_rows(spwm_blank_clock_row_transport,
                                    spwm_upload_rows);
+  const int spwm_data_layout = spwm_get_active_data_layout();
   // Expand to one upload per physical row only for a selected full-height
   // layout. Paired-row panels such as an 86-row ICND1065L with scan 43 keep the
   // normal double-row upload count.
-  const int spwm_effective_upload_rows =
+  const bool spwm_full_height_upload =
       spwm_should_use_full_height_upload(spwm_framebuffer_view,
-                                         spwm_effective_scan_rows)
-          ? spwm_effective_scan_rows
-          : spwm_upload_rows;
+                                         spwm_effective_scan_rows,
+                                         spwm_data_layout);
+  const int spwm_effective_upload_rows =
+      spwm_full_height_upload ? spwm_effective_scan_rows : spwm_upload_rows;
   const SPWM_OE_Style spwm_oe_style = spwm_get_active_oe_style();
   const bool spwm_type2_shiftreg_transport =
       spwm_uses_shiftreg_ab_blank_clock(spwm_row_address_type);
@@ -3501,13 +3507,15 @@ void spwm_dump_to_matrix(GPIO *io, const HardwareMapping &h,
   if (!spwm_blank_clock_row_transport) {
     spwm_upload_framebuffer_direct(
         io, h, spwm_row_setter, spwm_framebuffer_view, spwm_rgb_mask,
-        spwm_data_mask, spwm_upload_rows, spwm_chip_count,
-        spwm_channels_per_chip, spwm_word_bits, spwm_upload_scan_config,
+        spwm_data_mask, spwm_upload_rows, spwm_data_layout,
+        spwm_full_height_upload, spwm_chip_count, spwm_channels_per_chip,
+        spwm_word_bits, spwm_upload_scan_config,
         &spwm_oe_gate, &spwm_scan_state, &spwm_initial_oe_pending);
   } else {
     spwm_upload_framebuffer_shiftreg(
         io, h, spwm_framebuffer_view, spwm_rgb_mask, spwm_data_mask,
-        spwm_effective_upload_rows, spwm_effective_scan_rows, spwm_chip_count,
+        spwm_effective_upload_rows, spwm_data_layout,
+        spwm_full_height_upload, spwm_effective_scan_rows, spwm_chip_count,
         spwm_channels_per_chip,
         spwm_word_bits, spwm_upload_scan_config,
         &spwm_oe_gate, &spwm_scan_state, &spwm_initial_oe_pending);
