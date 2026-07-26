@@ -57,11 +57,18 @@ For full-height row-address type 1/2 panels eg 128x64 64S `--led-spwm-scan=64`\
 maps the left/right halves to RGB2/RGB1 and\
  `--led-spwm-data-layout=2` swaps those lanes.
 
+Some full-height panels use one complete serial column path instead of two
+half-width lanes. `--led-spwm-data-layout=3` sends the full width on both RGB
+buses; values `4` and `5` send it only on RGB1 or RGB2. If layout 1 repeats the
+right half of Demo 3 and layout 2 repeats the left half, try value `4`. Value `3`
+is the bus-independent broadcast alternative.
+
 These layouts require `--led-spwm-scan` to equal `--led-rows` and
-`--led-cols` to be divisible by 32, and cannot be combined with
-`--led-multiplexing`. Value `0` uses the panel profile default. On a chain,
-`--led-cols` must be the physical width of one panel so each panel is split
-independently.<br><br>
+cannot be combined with `--led-multiplexing`. Split layouts 1/2 also require
+`--led-cols` to be divisible by 32. Value `0` uses the panel profile default.
+For split layouts 1/2 on a chain, `--led-cols` must be the physical width of one
+panel so each panel is split independently. FM6373's profile default is layout
+1, so omitting the option does not test a separate layout.<br><br>
 
 **Don't worry about flicker as S-PWM devices have an internal refresh rate much higher, it is only the frame content changes when we refer to 60fps**
 
@@ -88,7 +95,7 @@ Pi 4 - ICND1065L 172x86 43S Example
     taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D8 --led-rows=86 --led-cols=172 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=5 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=icnd1065l --led-spwm-row-addr-type=2 --led-spwm-scan=43 --led-spwm-register-config=0
 
 This ICND1065L example uploads paired vertical rows because scan 43 is half of
-the 86-row panel height. Full-height data layouts 1/2 do not apply to it.
+the 86-row panel height. Full-height data layouts 1..5 do not apply to it.
 
 Pi 4 - ICND1065L 128x64 32S Example
 

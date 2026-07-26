@@ -42,11 +42,15 @@ enum SPWM_Row_Address_Type {
 
 // Resolved framebuffer-to-panel routing for an SPWM upload. The public value
 // 0 requests the panel profile default; profiles that leave it at 0 keep the
-// normal paired vertical RGB1/RGB2 upload.
+// normal paired vertical RGB1/RGB2 upload. Full-height layouts either split a
+// panel across two half-width data lanes or send the complete width serially.
 enum SPWM_Data_Layout {
   SPWM_DATA_LAYOUT_PROFILE_DEFAULT = 0,
   SPWM_DATA_LAYOUT_FULL_HEIGHT_LEFT_RGB2 = 1,
   SPWM_DATA_LAYOUT_FULL_HEIGHT_LEFT_RGB1 = 2,
+  SPWM_DATA_LAYOUT_FULL_HEIGHT_SERIAL_BOTH = 3,
+  SPWM_DATA_LAYOUT_FULL_HEIGHT_SERIAL_RGB1 = 4,
+  SPWM_DATA_LAYOUT_FULL_HEIGHT_SERIAL_RGB2 = 5,
 };
 
 // The current SPWM profiles expose at most six 1-based register slots.

@@ -802,7 +802,7 @@ void spwm_apply_pending_fixed_register_profile() {
 }
 
 // Option 0 follows the selected panel profile. Profiles that do not opt into a
-// full-height horizontal layout retain the normal paired RGB1/RGB2 upload.
+// full-height layout retain the normal paired RGB1/RGB2 upload.
 int spwm_get_active_data_layout() {
   const SPWM_Runtime_State &spwm_runtime_state = spwm_get_runtime_state();
   return spwm_runtime_state.data_layout !=
@@ -811,9 +811,27 @@ int spwm_get_active_data_layout() {
              : spwm_runtime_state.panel_settings.default_data_layout;
 }
 
-bool spwm_data_layout_uses_horizontal_lanes(int spwm_data_layout) {
+// Return whether this layout expands paired framebuffer rows into one upload
+// for every physical row.
+bool spwm_data_layout_uses_full_height_rows(int spwm_data_layout) {
+  return spwm_data_layout == SPWM_DATA_LAYOUT_FULL_HEIGHT_LEFT_RGB2 ||
+         spwm_data_layout == SPWM_DATA_LAYOUT_FULL_HEIGHT_LEFT_RGB1 ||
+         spwm_data_layout == SPWM_DATA_LAYOUT_FULL_HEIGHT_SERIAL_BOTH ||
+         spwm_data_layout == SPWM_DATA_LAYOUT_FULL_HEIGHT_SERIAL_RGB1 ||
+         spwm_data_layout == SPWM_DATA_LAYOUT_FULL_HEIGHT_SERIAL_RGB2;
+}
+
+// Return whether the full panel width is divided between RGB1 and RGB2.
+bool spwm_data_layout_splits_horizontal_lanes(int spwm_data_layout) {
   return spwm_data_layout == SPWM_DATA_LAYOUT_FULL_HEIGHT_LEFT_RGB2 ||
          spwm_data_layout == SPWM_DATA_LAYOUT_FULL_HEIGHT_LEFT_RGB1;
+}
+
+// Return whether the layout uses full-width serial column routing.
+bool spwm_data_layout_uses_serial_columns(int spwm_data_layout) {
+  return spwm_data_layout == SPWM_DATA_LAYOUT_FULL_HEIGHT_SERIAL_BOTH ||
+         spwm_data_layout == SPWM_DATA_LAYOUT_FULL_HEIGHT_SERIAL_RGB1 ||
+         spwm_data_layout == SPWM_DATA_LAYOUT_FULL_HEIGHT_SERIAL_RGB2;
 }
 
 // Return the singleton storage used by the OE gap auto-tuner.
@@ -2065,6 +2083,49 @@ gpio_bits_t spwm_route_selected_row_rgb_bits(
   return spwm_remapped_bits;
 }
 
+// Full-width serial panels retain the ordinary column stream instead of
+// splitting it into two repeated half-width lanes. Select one physical row
+// from the framebuffer's paired RGB bits, then drive the requested output bus.
+gpio_bits_t spwm_route_selected_row_serial_rgb_bits(
+    gpio_bits_t spwm_out_bits,
+    bool spwm_use_lower_framebuffer_half,
+    int spwm_data_layout,
+    const HardwareMapping &h) {
+  gpio_bits_t spwm_remapped_bits = 0;
+  if (spwm_data_layout == SPWM_DATA_LAYOUT_FULL_HEIGHT_SERIAL_BOTH ||
+      spwm_data_layout == SPWM_DATA_LAYOUT_FULL_HEIGHT_SERIAL_RGB1) {
+    spwm_remapped_bits |= spwm_route_selected_row_rgb_bits(
+        spwm_out_bits, spwm_use_lower_framebuffer_half, false, h);
+  }
+  if (spwm_data_layout == SPWM_DATA_LAYOUT_FULL_HEIGHT_SERIAL_BOTH ||
+      spwm_data_layout == SPWM_DATA_LAYOUT_FULL_HEIGHT_SERIAL_RGB2) {
+    spwm_remapped_bits |= spwm_route_selected_row_rgb_bits(
+        spwm_out_bits, spwm_use_lower_framebuffer_half, true, h);
+  }
+  return spwm_remapped_bits;
+}
+
+void spwm_apply_full_height_serial_upload_mapping(
+    SPWM_Pixel_Block_GPIO_Bits *spwm_block_gpio_bits,
+    int spwm_upload_row,
+    int spwm_framebuffer_double_rows,
+    int spwm_data_layout,
+    const HardwareMapping &h) {
+  if (spwm_block_gpio_bits == nullptr ||
+      spwm_framebuffer_double_rows <= 0) {
+    return;
+  }
+
+  const bool spwm_use_lower_framebuffer_half =
+      spwm_upload_row >= spwm_framebuffer_double_rows;
+  for (int spwm_bit = 0; spwm_bit < SPWM_WORD_BIT_COUNT; ++spwm_bit) {
+    spwm_block_gpio_bits->word_gpio_bits[spwm_bit] =
+        spwm_route_selected_row_serial_rgb_bits(
+            spwm_block_gpio_bits->word_gpio_bits[spwm_bit],
+            spwm_use_lower_framebuffer_half, spwm_data_layout, h);
+  }
+}
+
 // Combine matching columns from the left and right framebuffer halves. Rows
 // 0..double_rows-1 read their colors from the framebuffer RGB1 bits; later rows
 // read RGB2. The selected layout decides which physical RGB lane carries each
@@ -2097,24 +2158,25 @@ void spwm_combine_split_double_row_upload_blocks(
   }
 }
 
-// Only split when the caller has expanded the upload loop to the full panel
-// height and the framebuffer is exactly two physical halves. This keeps partial
-// scan overrides such as 86-row ICND1065L panels with --led-spwm-scan=43 on the
-// existing double-row upload path.
-bool spwm_should_split_double_row_upload(
+// Only select individual physical rows when the caller has expanded the upload
+// loop to the full panel height and the framebuffer is exactly two physical
+// halves. Partial scan overrides such as 86-row ICND1065L panels with
+// --led-spwm-scan=43 retain the existing paired-row upload path.
+bool spwm_should_use_full_height_upload(
     const SPWM_Framebuffer_View &spwm_framebuffer_view,
     int spwm_upload_rows) {
   const SPWM_Runtime_State &spwm_runtime_state = spwm_get_runtime_state();
   const int spwm_panel_columns = spwm_runtime_state.panel_columns;
-  return spwm_data_layout_uses_horizontal_lanes(
-             spwm_get_active_data_layout()) &&
+  const int spwm_data_layout = spwm_get_active_data_layout();
+  return spwm_data_layout_uses_full_height_rows(spwm_data_layout) &&
          spwm_row_address_type_uses_blank_clock(
              spwm_runtime_state.row_address_type) &&
          spwm_runtime_state.multiplexing == 0 &&
          spwm_upload_rows == spwm_framebuffer_view.rows &&
          spwm_framebuffer_view.double_rows > 0 &&
          spwm_panel_columns > 0 &&
-         spwm_panel_columns % 32 == 0 &&
+         (!spwm_data_layout_splits_horizontal_lanes(spwm_data_layout) ||
+          spwm_panel_columns % 32 == 0) &&
          spwm_framebuffer_view.columns >= spwm_panel_columns &&
          spwm_framebuffer_view.columns % spwm_panel_columns == 0 &&
          spwm_framebuffer_view.rows ==
@@ -2211,27 +2273,33 @@ void spwm_upload_framebuffer_blocks(
       std::max(spwm_framebuffer_view.pwm_low_bit, spwm_first_active_bit);
   const int spwm_active_bits =
       spwm_framebuffer_view.stored_bitplanes - spwm_start_bit;
-  const bool spwm_split_double_row_upload =
-      spwm_should_split_double_row_upload(spwm_framebuffer_view,
-                                          spwm_upload_rows);
   const int spwm_data_layout = spwm_get_active_data_layout();
+  const bool spwm_full_height_upload =
+      spwm_should_use_full_height_upload(spwm_framebuffer_view,
+                                         spwm_upload_rows);
+  const bool spwm_split_horizontal_lanes =
+      spwm_full_height_upload &&
+      spwm_data_layout_splits_horizontal_lanes(spwm_data_layout);
+  const bool spwm_serial_columns =
+      spwm_full_height_upload &&
+      spwm_data_layout_uses_serial_columns(spwm_data_layout);
   const int spwm_split_lane_chain_columns =
-      spwm_split_double_row_upload
+      spwm_split_horizontal_lanes
           ? spwm_framebuffer_view.columns / 2
           : spwm_framebuffer_view.columns;
   // The framebuffer width includes every chained panel. Split each panel into
   // its own RGB1/RGB2 halves instead of splitting the complete chain once.
   const int spwm_split_panel_columns =
-      spwm_split_double_row_upload
+      spwm_split_horizontal_lanes
           ? spwm_get_runtime_state().panel_columns
           : spwm_framebuffer_view.columns;
   const int spwm_split_panel_lane_columns = spwm_split_panel_columns / 2;
 
   for (int spwm_row = 0; spwm_row < spwm_upload_rows; ++spwm_row) {
-    // In split-upload mode the second half of the upload rows reuses the same
-    // stored framebuffer rows, then selects RGB2 data in the block mapping below.
+    // Full-height modes reuse the stored double rows, then select RGB1 or RGB2
+    // framebuffer data for each physical upload row in the mapping below.
     const int spwm_framebuffer_row =
-        spwm_split_double_row_upload
+        spwm_full_height_upload
             ? spwm_row % spwm_framebuffer_view.double_rows
             : spwm_row;
     if (spwm_framebuffer_row < 0 ||
@@ -2253,7 +2321,7 @@ void spwm_upload_framebuffer_blocks(
             spwm_chip * spwm_channels_per_chip + spwm_channel;
         SPWM_Pixel_Block_GPIO_Bits spwm_block_gpio_bits =
             spwm_zero_block_gpio_bits;
-        if (spwm_split_double_row_upload) {
+        if (spwm_split_horizontal_lanes) {
           // Keep the established full-width timing, but repeat each half-width
           // lane so the final retained words contain both horizontal halves.
           const int spwm_lane_chain_column =
@@ -2294,6 +2362,11 @@ void spwm_upload_framebuffer_blocks(
                 spwm_start_bit,
                 spwm_active_bits,
                 spwm_rgb_mask);
+            if (spwm_serial_columns) {
+              spwm_apply_full_height_serial_upload_mapping(
+                  &spwm_block_gpio_bits, spwm_row,
+                  spwm_framebuffer_view.double_rows, spwm_data_layout, h);
+            }
           }
         }
         spwm_emit_block(spwm_block_gpio_bits, spwm_chip == spwm_last_chip);
@@ -3320,12 +3393,12 @@ void spwm_dump_to_matrix(GPIO *io, const HardwareMapping &h,
   const int spwm_effective_scan_rows =
       spwm_get_effective_scan_rows(spwm_blank_clock_row_transport,
                                    spwm_upload_rows);
-  // Expand to one upload per physical row only for a selected horizontal-lane
+  // Expand to one upload per physical row only for a selected full-height
   // layout. Paired-row panels such as an 86-row ICND1065L with scan 43 keep the
   // normal double-row upload count.
   const int spwm_effective_upload_rows =
-      spwm_should_split_double_row_upload(spwm_framebuffer_view,
-                                          spwm_effective_scan_rows)
+      spwm_should_use_full_height_upload(spwm_framebuffer_view,
+                                         spwm_effective_scan_rows)
           ? spwm_effective_scan_rows
           : spwm_upload_rows;
   const SPWM_OE_Style spwm_oe_style = spwm_get_active_oe_style();

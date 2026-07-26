@@ -63,8 +63,8 @@ struct RGBLedMatrixOptions {
    * like 32 or 64, but other widths such as 40 or 172 are also possible.
    * cols * chain_length is the total length of the display, so you can
    * represent a 64 wide display as cols=32, chain=2 or cols=64, chain=1.
-   * Full-height SPWM data layouts require cols to remain the physical width
-   * of each panel so every chained panel is split independently.
+   * Full-height SPWM split layouts require cols to remain the physical width
+   * of each panel so every chained panel is divided independently.
    * Flag: --led-cols
    */
   int cols;
@@ -131,10 +131,10 @@ struct RGBLedMatrixOptions {
    */
   int spwm_scan_rows;  /* Corresponding flag: --led-spwm-scan */
 
-  /* SPWM framebuffer data layout. 0 selects the panel-profile default; 1 maps
-   * the full-height left/right lanes to RGB2/RGB1, while 2 swaps them.
-   * Layouts 1/2 are only for full-height row-address types 1/2 and cannot be
-   * combined with --led-multiplexing.
+  /* SPWM framebuffer data layout. 0 selects the panel-profile default; 1/2
+   * split the full-height panel across swapped RGB lanes. 3 streams the full
+   * width on both RGB buses; 4/5 select only RGB1/RGB2. Layouts 1..5 require
+   * full-height row-address types 1/2 and cannot use --led-multiplexing.
    */
   int spwm_data_layout;  /* Corresponding flag: --led-spwm-data-layout */
 
