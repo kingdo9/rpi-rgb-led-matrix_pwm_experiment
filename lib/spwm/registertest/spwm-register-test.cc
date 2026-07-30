@@ -25,6 +25,7 @@ namespace internal {
 namespace {
 
 const int kSceneDurationMs = 4000;
+const char kTextScrollMessage[] = "Register Test";
 
 const char *const kRegisterTestPanelNames[] = {
     "FM6353",
@@ -37,6 +38,21 @@ const char *const kRegisterTestPanelNames[] = {
 struct TinyGlyph {
   char character;
   uint8_t rows[5];
+};
+
+struct TextScrollGlyph {
+  char character;
+  uint8_t rows[6];
+};
+
+// Keep one marquee phase across register changes while this Demo 15 run is
+// active. Register uploads deliberately pause, rather than reset, that phase.
+struct TextScrollState {
+  TextScrollState() : x(0), band(0), initialized(false) {}
+
+  int x;
+  uint8_t band;
+  bool initialized;
 };
 
 // One decoded terminal command. Commands are queued individually so repeated
@@ -148,6 +164,39 @@ class TerminalRegisterTestInput {
     }
   }
 
+  // Check once without delaying the next text-scroll frame. SwapOnVSync()
+  // supplies that frame's cadence, including any --led-limit-refresh cap.
+  RegisterTestInput PollInput() {
+    if (!pending_actions_.empty()) return TakeNextAction();
+
+    RegisterTestInput input;
+    if (!enabled_) return input;
+
+    struct pollfd input_poll = {STDIN_FILENO, POLLIN, 0};
+    const int poll_result = poll(&input_poll, 1, 0);
+    if (poll_result <= 0) return input;
+    if ((input_poll.revents & (POLLHUP | POLLERR | POLLNVAL)) != 0) {
+      escape_state_ = 0;
+      return input;
+    }
+    if ((input_poll.revents & POLLIN) == 0) return input;
+
+    char input_bytes[32];
+    const ssize_t input_count =
+        read(STDIN_FILENO, input_bytes, sizeof(input_bytes));
+    if (input_count <= 0) {
+      escape_state_ = 0;
+      return input;
+    }
+
+    for (ssize_t input_index = 0;
+         input_index < input_count;
+         ++input_index) {
+      ConsumeByte(input_bytes[input_index]);
+    }
+    return pending_actions_.empty() ? input : TakeNextAction();
+  }
+
  private:
   RegisterTestInput TakeNextAction() {
     const RegisterTestInput input = pending_actions_.front();
@@ -252,6 +301,18 @@ const TinyGlyph kTinyGlyphs[] = {
     {'Y', {0x5, 0x5, 0x2, 0x2, 0x2}},
 };
 
+// These marquee letters are embedded from the repository's public-domain
+// fonts/5x7.bdf so the register test has no runtime font-file dependency. Its
+// empty seventh cell row is omitted so the visible glyph can fill each band.
+const TextScrollGlyph kTextScrollGlyphs[] = {
+    {'R', {0x1c, 0x12, 0x12, 0x1c, 0x14, 0x12}},
+    {'E', {0x1e, 0x10, 0x1c, 0x10, 0x10, 0x1e}},
+    {'G', {0x0c, 0x12, 0x10, 0x16, 0x12, 0x0e}},
+    {'I', {0x0e, 0x04, 0x04, 0x04, 0x04, 0x0e}},
+    {'S', {0x0c, 0x12, 0x08, 0x04, 0x12, 0x0c}},
+    {'T', {0x0e, 0x04, 0x04, 0x04, 0x04, 0x04}},
+};
+
 // Panel-type matching intentionally accepts case-insensitive suffix variants,
 // mirroring the core SPWM profile lookup (for example "fm6373-something").
 const char *FindRegisterTestPanelLabel(const char *panel_type) {
@@ -353,6 +414,31 @@ const uint8_t *FindTinyGlyph(char character) {
   return kTinyGlyphs[0].rows;
 }
 
+char UppercaseGlyphCharacter(char character) {
+  return character >= 'a' && character <= 'z'
+             ? static_cast<char>(character - 'a' + 'A')
+             : character;
+}
+
+uint8_t TextScrollGlyphRow(char character, int row, bool use_slim_font) {
+  character = UppercaseGlyphCharacter(character);
+  if (!use_slim_font) {
+    return row >= 0 && row < 5 ? FindTinyGlyph(character)[row] : 0;
+  }
+
+  for (size_t glyph_index = 0;
+       glyph_index < sizeof(kTextScrollGlyphs) /
+                         sizeof(kTextScrollGlyphs[0]);
+       ++glyph_index) {
+    if (kTextScrollGlyphs[glyph_index].character == character) {
+      return row >= 0 && row < 6
+                 ? kTextScrollGlyphs[glyph_index].rows[row]
+                 : 0;
+    }
+  }
+  return 0;
+}
+
 int TinyTextWidth(const char *text) {
   const size_t character_count = text != nullptr ? strlen(text) : 0;
   return character_count == 0 ? 0 : static_cast<int>(character_count * 4 - 1);
@@ -397,6 +483,127 @@ void DrawProfileLabel(Canvas *canvas, const char *panel_label,
   FillRectangle(canvas, 1, 1, label_width + 2, 13, Color(0, 0, 0));
   DrawTinyText(canvas, 2, 2, panel_label, Color(255, 255, 255));
   DrawTinyText(canvas, 2, 8, profile_label, Color(255, 255, 0));
+}
+
+int TextScrollHeight(int panel_height) {
+  if (panel_height <= 0) return 0;
+  const int text_height = panel_height / 3;
+  return text_height > 0 ? text_height : 1;
+}
+
+int TextScrollGlyphWidth(int text_height) {
+  const int glyph_width = text_height >= 7
+                              ? (text_height * 5 + 3) / 7
+                              : (text_height * 3 + 2) / 5;
+  return glyph_width > 0 ? glyph_width : 1;
+}
+
+int TextScrollSpacing(int text_height) {
+  const int spacing =
+      text_height >= 7 ? text_height / 7 : text_height / 5;
+  return spacing > 0 ? spacing : 1;
+}
+
+int TextScrollWidth(int text_height) {
+  const size_t character_count = sizeof(kTextScrollMessage) - 1;
+  return static_cast<int>(character_count) *
+             TextScrollGlyphWidth(text_height) +
+         static_cast<int>(character_count - 1) *
+             TextScrollSpacing(text_height);
+}
+
+void InitializeTextScroll(Canvas *canvas, TextScrollState *state) {
+  if (state == nullptr || state->initialized) return;
+  state->x = canvas->width();
+  state->band = 0;
+  state->initialized = true;
+}
+
+const Color &TextScrollColor(size_t color_index) {
+  static const Color palette[] = {
+      Color(255, 255, 255),
+      Color(255, 0, 0),
+      Color(0, 255, 0),
+      Color(0, 0, 255),
+      Color(255, 255, 0),
+      Color(170, 0, 255),
+  };
+  return palette[color_index % (sizeof(palette) / sizeof(palette[0]))];
+}
+
+void DrawTextScrollScene(Canvas *canvas, const char *panel_label,
+                         size_t one_based_profile_index,
+                         TextScrollState *state) {
+  const int visible_width = canvas->width();
+  const int panel_height = canvas->height();
+  const int text_height = TextScrollHeight(panel_height);
+  canvas->Clear();
+  if (state == nullptr || visible_width <= 0 || text_height <= 0) return;
+
+  InitializeTextScroll(canvas, state);
+  const bool use_slim_font = text_height >= 7;
+  const int source_rows = use_slim_font ? 6 : 5;
+  const int source_columns = use_slim_font ? 5 : 3;
+  const int glyph_width = TextScrollGlyphWidth(text_height);
+  const int spacing = TextScrollSpacing(text_height);
+  const int band_top = state->band * panel_height / 3;
+  const int band_bottom = (state->band + 1) * panel_height / 3;
+  const int render_height = band_bottom - band_top;
+  if (render_height <= 0) return;
+  int cursor_x = state->x;
+  size_t letter_index = 0;
+
+  for (const char *character = kTextScrollMessage;
+       *character != '\0'; ++character) {
+    if (*character != ' ') {
+      if (cursor_x < visible_width && cursor_x + glyph_width > 0) {
+        const Color &color = TextScrollColor(letter_index);
+        for (int output_y = 0; output_y < render_height; ++output_y) {
+          const int source_row = output_y * source_rows / render_height;
+          const uint8_t row_bits = TextScrollGlyphRow(
+              *character, source_row, use_slim_font);
+          for (int output_x = 0; output_x < glyph_width; ++output_x) {
+            const int source_column =
+                output_x * source_columns / glyph_width;
+            const int pixel_x = cursor_x + output_x;
+            if (pixel_x >= 0 && pixel_x < visible_width &&
+                (row_bits &
+                 (1u << (source_columns - 1 - source_column))) != 0) {
+              canvas->SetPixel(pixel_x, band_top + output_y,
+                               color.r, color.g, color.b);
+            }
+          }
+        }
+      }
+      ++letter_index;
+    }
+    cursor_x += glyph_width + spacing;
+  }
+
+  DrawProfileLabel(canvas, panel_label, one_based_profile_index);
+}
+
+void AdvanceTextScroll(Canvas *canvas, int steps, TextScrollState *state) {
+  if (state == nullptr || steps <= 0) return;
+  InitializeTextScroll(canvas, state);
+
+  const int visible_width = canvas->width();
+  const int text_height = TextScrollHeight(canvas->height());
+  const int text_width = TextScrollWidth(text_height);
+  if (visible_width <= 0 || text_height <= 0 || text_width <= 0) return;
+
+  const int distance_to_wrap = state->x + text_width;
+  if (steps < distance_to_wrap) {
+    state->x -= steps;
+    return;
+  }
+
+  const int travel = visible_width + text_width;
+  const int remaining_after_wrap = steps - distance_to_wrap;
+  const int completed_passes = 1 + remaining_after_wrap / travel;
+  state->band = static_cast<uint8_t>(
+      (state->band + completed_passes % 3) % 3);
+  state->x = visible_width - remaining_after_wrap % travel;
 }
 
 void DrawAlignmentScene(Canvas *canvas, const char *panel_label,
@@ -463,11 +670,27 @@ void DrawGradientScene(Canvas *canvas, const char *panel_label,
 
 void ShowProfileScene(RGBMatrix *matrix, FrameCanvas **offscreen,
                       const char *panel_label, size_t profile_index,
-                      bool show_gradient) {
-  if (show_gradient) {
-    DrawGradientScene(*offscreen, panel_label, profile_index + 1);
-  } else {
-    DrawAlignmentScene(*offscreen, panel_label, profile_index + 1);
+                      SPWM_Register_Test_Pattern pattern,
+                      bool show_gradient, TextScrollState *text_scroll_state) {
+  switch (pattern) {
+    case SPWM_REGISTER_TEST_PATTERN_TEXTSCROLL:
+      DrawTextScrollScene(*offscreen, panel_label, profile_index + 1,
+                          text_scroll_state);
+      break;
+    case SPWM_REGISTER_TEST_PATTERN_ALIGN:
+      DrawAlignmentScene(*offscreen, panel_label, profile_index + 1);
+      break;
+    case SPWM_REGISTER_TEST_PATTERN_CYCLE:
+      if (show_gradient) {
+        DrawGradientScene(*offscreen, panel_label, profile_index + 1);
+      } else {
+        DrawAlignmentScene(*offscreen, panel_label, profile_index + 1);
+      }
+      break;
+    case SPWM_REGISTER_TEST_PATTERN_GRADIENT:
+    default:
+      DrawGradientScene(*offscreen, panel_label, profile_index + 1);
+      break;
   }
   *offscreen = matrix->SwapOnVSync(*offscreen);
 }
@@ -627,6 +850,8 @@ const char *RegisterTestPatternDescription(
       return "ALIGNMENT ONLY";
     case SPWM_REGISTER_TEST_PATTERN_CYCLE:
       return "ALIGNMENT + COLOR GRADIENT (alternates every 4 seconds)";
+    case SPWM_REGISTER_TEST_PATTERN_TEXTSCROLL:
+      return "TEXTSCROLL (top / middle / bottom)";
     case SPWM_REGISTER_TEST_PATTERN_GRADIENT:
     default:
       return "COLOR GRADIENT ONLY";
@@ -635,6 +860,7 @@ const char *RegisterTestPatternDescription(
 
 // Print the controls prominently before any large per-profile metadata output.
 void PrintRegisterTestControls(SPWM_Register_Test_Pattern pattern,
+                               int text_scroll_step_pixels,
                                uint64_t scan_filter) {
   printf("\n"
          "============================================================\n"
@@ -644,6 +870,11 @@ void PrintRegisterTestControls(SPWM_Register_Test_Pattern pattern,
   printf("  >>> SCAN FILTER: ");
   PrintScanFilter(scan_filter);
   printf(" <<<\n");
+  if (pattern == SPWM_REGISTER_TEST_PATTERN_TEXTSCROLL) {
+    printf("  >>> TEXT SPEED: %d PIXEL%s / REFRESH FRAME <<<\n",
+           text_scroll_step_pixels,
+           text_scroll_step_pixels == 1 ? "" : "S");
+  }
   printf("  LEFT / RIGHT : previous or next register profile\n"
          "  [M]          : mark/unmark the displayed profile as good\n"
          "  [ENTER]      : lock marks and browse only the finalists\n"
@@ -660,14 +891,19 @@ size_t WaitForProfileInteraction(
     TerminalRegisterTestInput *terminal_input, const char *panel_label,
     const char *profile_name, size_t profile_index,
     RegisterTestSelection *selection, SPWM_Register_Test_Pattern pattern,
+    int text_scroll_step_pixels,
+    TextScrollState *text_scroll_state,
     volatile bool *interrupt_received, SPWM_Register_Test_Result *result) {
-  bool show_gradient = pattern != SPWM_REGISTER_TEST_PATTERN_ALIGN;
+  bool show_gradient = pattern == SPWM_REGISTER_TEST_PATTERN_GRADIENT ||
+                       pattern == SPWM_REGISTER_TEST_PATTERN_CYCLE;
   const bool alternate_scenes =
       pattern == SPWM_REGISTER_TEST_PATTERN_CYCLE;
+  const bool scroll_text =
+      pattern == SPWM_REGISTER_TEST_PATTERN_TEXTSCROLL;
   bool current_profile_is_visible = false;
   while (!WasInterrupted(interrupt_received)) {
     ShowProfileScene(matrix, offscreen, panel_label, profile_index,
-                     show_gradient);
+                     pattern, show_gradient, text_scroll_state);
     if (!current_profile_is_visible) {
       if (result != nullptr) {
         result->has_displayed_profile = true;
@@ -682,12 +918,18 @@ size_t WaitForProfileInteraction(
     // the timed input wait after the user has already asked to quit.
     if (WasInterrupted(interrupt_received)) break;
     const RegisterTestInput input =
-        terminal_input->WaitForInput(kSceneDurationMs);
+        scroll_text ? terminal_input->PollInput()
+                    : terminal_input->WaitForInput(kSceneDurationMs);
     // A signal can arrive while poll() is waiting or while decoded actions
     // remain queued. Do not mutate the selection after the user asked to quit.
     if (WasInterrupted(interrupt_received)) break;
     if (!input.HasAction()) {
-      if (alternate_scenes) show_gradient = !show_gradient;
+      if (scroll_text) {
+        AdvanceTextScroll(*offscreen, text_scroll_step_pixels,
+                          text_scroll_state);
+      } else if (alternate_scenes) {
+        show_gradient = !show_gradient;
+      }
       continue;
     }
 
@@ -967,6 +1209,7 @@ bool RunRGBProfiles(RGBMatrix *matrix,
                     const char *panel_label,
                     const SPWM_Register_Profile_File &catalog,
                     SPWM_Register_Test_Pattern pattern,
+                    int text_scroll_step_pixels,
                     uint64_t scan_filter,
                     volatile bool *interrupt_received,
                     SPWM_Register_Test_Result *result) {
@@ -985,6 +1228,7 @@ bool RunRGBProfiles(RGBMatrix *matrix,
   }
   size_t profile_index = profile_indices[0];
   RegisterTestSelection selection(catalog.profile_count(), profile_indices);
+  TextScrollState text_scroll_state;
   bool succeeded = true;
 
   while (!WasInterrupted(interrupt_received)) {
@@ -1017,7 +1261,8 @@ bool RunRGBProfiles(RGBMatrix *matrix,
 
     profile_index = WaitForProfileInteraction(
         matrix, &offscreen, terminal_input, panel_label, profile->name,
-        profile_index, &selection, pattern, interrupt_received, result);
+        profile_index, &selection, pattern, text_scroll_step_pixels,
+        &text_scroll_state, interrupt_received, result);
   }
 
   if (result != nullptr) result->final_output_ready = true;
@@ -1029,6 +1274,7 @@ bool RunFixedProfiles(RGBMatrix *matrix,
                       const char *panel_label,
                       const SPWM_Register_Profile_File &catalog,
                       SPWM_Register_Test_Pattern pattern,
+                      int text_scroll_step_pixels,
                       uint64_t scan_filter,
                       volatile bool *interrupt_received,
                       SPWM_Register_Test_Result *result) {
@@ -1047,6 +1293,7 @@ bool RunFixedProfiles(RGBMatrix *matrix,
   }
   size_t profile_index = profile_indices[0];
   RegisterTestSelection selection(catalog.profile_count(), profile_indices);
+  TextScrollState text_scroll_state;
   bool succeeded = true;
 
   while (!WasInterrupted(interrupt_received)) {
@@ -1079,7 +1326,8 @@ bool RunFixedProfiles(RGBMatrix *matrix,
 
     profile_index = WaitForProfileInteraction(
         matrix, &offscreen, terminal_input, panel_label, profile->name,
-        profile_index, &selection, pattern, interrupt_received, result);
+        profile_index, &selection, pattern, text_scroll_step_pixels,
+        &text_scroll_state, interrupt_received, result);
   }
 
   if (result != nullptr) result->final_output_ready = true;
@@ -1099,12 +1347,18 @@ bool SupportsSPWMRegisterTest(const char *panel_type) {
 
 bool RunSPWMRegisterTest(RGBMatrix *matrix, const char *panel_type,
                          SPWM_Register_Test_Pattern pattern,
+                         int text_scroll_step_pixels,
                          uint64_t scan_filter,
                          volatile bool *interrupt_received,
                          SPWM_Register_Test_Result *result) {
   if (result != nullptr) *result = SPWM_Register_Test_Result();
   if (matrix == nullptr) {
     fprintf(stderr, "Demo 15 cannot run without an RGB matrix.\n");
+    return false;
+  }
+  if (pattern == SPWM_REGISTER_TEST_PATTERN_TEXTSCROLL &&
+      text_scroll_step_pixels < 1) {
+    fprintf(stderr, "Demo 15 TEXTSCROLL speed must be at least 1.\n");
     return false;
   }
 
@@ -1127,7 +1381,7 @@ bool RunSPWMRegisterTest(RGBMatrix *matrix, const char *panel_type,
          catalog->profile_count(), panel_label, catalog->data_path().c_str());
 
   TerminalRegisterTestInput terminal_input;
-  PrintRegisterTestControls(pattern, scan_filter);
+  PrintRegisterTestControls(pattern, text_scroll_step_pixels, scan_filter);
   if (!terminal_input.enabled()) {
     fprintf(stderr,
             "D15 navigation, marking, and final selection require an "
@@ -1137,10 +1391,12 @@ bool RunSPWMRegisterTest(RGBMatrix *matrix, const char *panel_type,
 
   if (catalog->kind() == SPWM_REGISTER_PROFILE_RGB) {
     return RunRGBProfiles(matrix, &terminal_input, panel_label, *catalog,
-                          pattern, scan_filter, interrupt_received, result);
+                          pattern, text_scroll_step_pixels, scan_filter,
+                          interrupt_received, result);
   }
   return RunFixedProfiles(matrix, &terminal_input, panel_label, *catalog,
-                          pattern, scan_filter, interrupt_received, result);
+                          pattern, text_scroll_step_pixels, scan_filter,
+                          interrupt_received, result);
 }
 
 void PrintSPWMRegisterTestResult(const char *panel_type,

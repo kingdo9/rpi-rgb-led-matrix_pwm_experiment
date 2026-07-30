@@ -12,6 +12,7 @@
 #include "spwm/registertest/spwm-register-test.h"
 
 #include <assert.h>
+#include <errno.h>
 #include <getopt.h>
 #include <limits.h>
 #include <math.h>
@@ -37,7 +38,7 @@ static void InterruptHandler(int signo) {
   interrupt_received = true;
 }
 
-// Parse Demo 15's three presentation modes; register navigation remains manual
+// Parse Demo 15's presentation modes; register navigation remains manual
 // and independent of which scene is selected.
 static bool ParseRegisterTestPattern(
     const char *value, internal::SPWM_Register_Test_Pattern *pattern) {
@@ -48,9 +49,26 @@ static bool ParseRegisterTestPattern(
     *pattern = internal::SPWM_REGISTER_TEST_PATTERN_ALIGN;
   } else if (strcmp(value, "cycle") == 0) {
     *pattern = internal::SPWM_REGISTER_TEST_PATTERN_CYCLE;
+  } else if (strcmp(value, "textscroll") == 0) {
+    *pattern = internal::SPWM_REGISTER_TEST_PATTERN_TEXTSCROLL;
   } else {
     return false;
   }
+  return true;
+}
+
+static bool ParseRegisterTestTextSpeed(const char *value,
+                                       int *step_pixels) {
+  if (value == NULL || step_pixels == NULL || *value == '\0') return false;
+
+  errno = 0;
+  char *value_end = NULL;
+  const long parsed_value = strtol(value, &value_end, 10);
+  if (errno == ERANGE || value_end == value || *value_end != '\0' ||
+      parsed_value < 1 || parsed_value > INT_MAX) {
+    return false;
+  }
+  *step_pixels = static_cast<int>(parsed_value);
   return true;
 }
 
@@ -320,13 +338,15 @@ class SPWMRegisterTestDemo : public DemoRunner {
 public:
   SPWMRegisterTestDemo(RGBMatrix *m, const char *panel_type,
                        internal::SPWM_Register_Test_Pattern pattern,
+                       int text_scroll_step_pixels,
                        uint64_t scan_filter)
       : DemoRunner(m), matrix_(m), panel_type_(panel_type), pattern_(pattern),
+        text_scroll_step_pixels_(text_scroll_step_pixels),
         scan_filter_(scan_filter), succeeded_(false) {}
   void Run() override {
     succeeded_ = internal::RunSPWMRegisterTest(
-        matrix_, panel_type_, pattern_, scan_filter_, &interrupt_received,
-        &result_);
+        matrix_, panel_type_, pattern_, text_scroll_step_pixels_,
+        scan_filter_, &interrupt_received, &result_);
   }
   bool succeeded() const { return succeeded_; }
   const internal::SPWM_Register_Test_Result &result() const { return result_; }
@@ -335,6 +355,7 @@ private:
   RGBMatrix *const matrix_;
   const char *const panel_type_;
   const internal::SPWM_Register_Test_Pattern pattern_;
+  const int text_scroll_step_pixels_;
   const uint64_t scan_filter_;
   bool succeeded_;
   internal::SPWM_Register_Test_Result result_;
@@ -1298,8 +1319,11 @@ static int usage(const char *progname) {
   fprintf(stderr, "Options:\n");
   fprintf(stderr,
           "\t-D <demo-nr>              : Always needs to be set\n"
-          "\t--register-test-pattern=<gradient|align|cycle>\n"
-          "\t                          : Demo 15 test pattern (Default: gradient)\n"
+          "\t--register-test-pattern=<textscroll|gradient|align|cycle>\n"
+          "\t                          : Demo 15 test pattern (Default: textscroll)\n"
+          "\t--register-test-textspeed=<pixels>\n"
+          "\t                          : Demo 15 TEXTSCROLL pixels per "
+          "refresh frame (Default: 1)\n"
           "\t--register-test-scan=<all|rows[,rows...]>\n"
           "\t                          : Demo 15 scan filter, e.g. 32 or "
           "1/32,1/16 (Default: all)\n"
@@ -1334,11 +1358,14 @@ static int usage(const char *progname) {
 int main(int argc, char *argv[]) {
   enum {
     OPT_REGISTER_TEST_PATTERN = 1000,
+    OPT_REGISTER_TEST_TEXTSPEED,
     OPT_REGISTER_TEST_SCAN,
   };
   static const struct option long_options[] = {
       {"register-test-pattern", required_argument, NULL,
        OPT_REGISTER_TEST_PATTERN},
+      {"register-test-textspeed", required_argument, NULL,
+       OPT_REGISTER_TEST_TEXTSPEED},
       {"register-test-scan", required_argument, NULL,
        OPT_REGISTER_TEST_SCAN},
       {NULL, 0, NULL, 0},
@@ -1347,8 +1374,10 @@ int main(int argc, char *argv[]) {
   int demo = -1;
   int scroll_ms = 30;
   internal::SPWM_Register_Test_Pattern register_test_pattern =
-      internal::SPWM_REGISTER_TEST_PATTERN_GRADIENT;
+      internal::SPWM_REGISTER_TEST_PATTERN_TEXTSCROLL;
   bool register_test_pattern_set = false;
+  int register_test_text_speed = 1;
+  bool register_test_text_speed_set = false;
   uint64_t register_test_scan_filter = 0;
   bool register_test_scan_set = false;
 
@@ -1383,8 +1412,18 @@ int main(int argc, char *argv[]) {
       register_test_pattern_set = true;
       if (!ParseRegisterTestPattern(optarg, &register_test_pattern)) {
         fprintf(stderr,
-                TERM_ERR "--register-test-pattern must be 'gradient', "
-                         "'align', or 'cycle'.\n" TERM_NORM);
+                TERM_ERR "--register-test-pattern must be 'textscroll', "
+                         "'gradient', 'align', or 'cycle'.\n" TERM_NORM);
+        return usage(argv[0]);
+      }
+      break;
+
+    case OPT_REGISTER_TEST_TEXTSPEED:
+      register_test_text_speed_set = true;
+      if (!ParseRegisterTestTextSpeed(optarg, &register_test_text_speed)) {
+        fprintf(stderr,
+                TERM_ERR "--register-test-textspeed must be a positive "
+                         "integer.\n" TERM_NORM);
         return usage(argv[0]);
       }
       break;
@@ -1418,6 +1457,13 @@ int main(int argc, char *argv[]) {
   if (register_test_pattern_set && demo != 15) {
     fprintf(stderr,
             TERM_ERR "--register-test-pattern is only available with "
+                     "-D 15.\n" TERM_NORM);
+    return usage(argv[0]);
+  }
+
+  if (register_test_text_speed_set && demo != 15) {
+    fprintf(stderr,
+            TERM_ERR "--register-test-textspeed is only available with "
                      "-D 15.\n" TERM_NORM);
     return usage(argv[0]);
   }
@@ -1551,6 +1597,7 @@ int main(int argc, char *argv[]) {
       register_test_demo =
           new SPWMRegisterTestDemo(matrix, matrix_options.panel_type,
                                    register_test_pattern,
+                                   register_test_text_speed,
                                    register_test_scan_filter);
       demo_runner = register_test_demo;
       break;

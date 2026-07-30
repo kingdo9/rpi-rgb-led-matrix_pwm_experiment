@@ -124,10 +124,17 @@ Run the demo -D15 test, example:
 
     taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D15 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=5 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=sm16380sh --led-spwm-row-addr-type=1
 
-This test shows the color gradient by default.
-Alternatively add\
-`--register-test-pattern=align` to hold the Demo 15 alignment scene or\
-`--register-test-pattern=cycle` to alternate both scenes every few seconds.
+This test scrolls "Register Test" through the top, middle, and bottom of the
+display by default. It advances once per displayed refresh frame, so
+`--led-limit-refresh` controls the scroll rate; without that option it runs at
+the panel's available refresh rate.
+`--register-test-pattern=textscroll` scrolling text demo,\
+`--register-test-textspeed=N` to move
+N pixels per refresh frame instead of the default 1 pixel. Alternatively add\
+`--register-test-pattern=gradient` to hold the color gradient,\
+`--register-test-pattern=align` to hold the Demo 15 alignment scene, or\
+`--register-test-pattern=cycle` to alternate the gradient and alignment scenes
+every few seconds.
 
 Add `--register-test-scan=32` to visit only profiles tagged for 1/32 scan, or
 pass a comma-separated set such as\

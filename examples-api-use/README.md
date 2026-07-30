@@ -13,8 +13,10 @@ $ sudo ./demo
 usage: ./demo <options> -D <demo-nr> [optional parameter]
 Options:
         -D <demo-nr>              : Always needs to be set
-        --register-test-pattern=<gradient|align|cycle>
-                                    : Demo 15 test pattern (Default: gradient)
+        --register-test-pattern=<textscroll|gradient|align|cycle>
+                                    : Demo 15 test pattern (Default: textscroll)
+        --register-test-textspeed=<pixels>
+                                    : Demo 15 textscroll pixels per refresh frame (Default: 1)
         --register-test-scan=<all|rows[,rows...]>
                                     : Demo 15 scan filter, e.g. 32 or 1/32,1/16 (Default: all)
         --led-gpio-mapping=<name> : Name of GPIO mapping used. Default "regular"

@@ -1,4 +1,4 @@
-RGBMATRIX_SPWM_PROFILES_V4	fm6363	fixed	78
+RGBMATRIX_SPWM_PROFILES_V4	fm6363	fixed	80
 fm6363_regtype1	built-in main FM6363 register config	Scan_32	1,1fb0,1fb0,1fb0;2,f39c,f39c,f39c;3,20b6,20b6,20b6;4,1a00,1a00,1a00;5,7e08,7e08,7e08
 fm6363_regtype2	P1.25 - FM6363 - 7559 - 1/64	Scan_64	1,3fb0,3fb0,3fb0;2,6375,5375,4b75;3,64c6,68c6,6cc6;4,5a70,5a70,5a70;5,7e08,7e08,7e08
 fm6363_regtype3	P1.538 - FM6363 - 7559 - 1/52	Scan_52	1,33f0,33f0,33f0;2,639d,539d,4b9d;3,64f6,68f6,6cf6;4,5a70,5a70,5a70;5,7e08,7e08,7e08
@@ -77,3 +77,5 @@ fm6363_regtype75	P2.5 - FM6363 - 1/16	Scan_16	1,0ff8,0ff8,0ff8;2,f2db,e6bf,d71f;
 fm6363_regtype76	P5 - FM6363 - 1/11	Scan_11	1,0a70,0a70,0a70;2,f306,e702,d720;3,60b6,60b6,60b6;4,1a10,1a70,1a70;5,7e08,7e08,7e08
 fm6363_regtype77	P6 - FM6363 - 1/6	Scan_6	1,0578,0578,0578;2,f313,e6f5,d6ef;3,20b2,20b2,20b2;4,0a10,0a70,0a70;5,7e08,7e08,7e08
 fm6363_regtype78	P3 - FM6363 - 1/13	Scan_13	1,0cf8,0cf8,0cf8;2,f317,e721,d6e7;3,20a6,20b6,20b6;4,0a00,0a70,0a70;5,7c08,7c08,7c08
+fm6363_regtype79	FM6363 register profile	Scan_40	1,27b0,27b0,27b0;2,639d,4b9d,439d;3,6496,6896,6c96;4,5a30,5a70,5a70;5,7e08,7e08,7e08
+fm6363_regtype80	FM6363 register profile	Scan_43	1,2af0,2af0,2af0;2,579c,679c,579c;3,60b6,60b6,60b6;4,1a00,1a70,1a70;5,7e08,7e08,7e08
