@@ -51,6 +51,8 @@ static bool ParseRegisterTestPattern(
     *pattern = internal::SPWM_REGISTER_TEST_PATTERN_CYCLE;
   } else if (strcmp(value, "textscroll") == 0) {
     *pattern = internal::SPWM_REGISTER_TEST_PATTERN_TEXTSCROLL;
+  } else if (strcmp(value, "tear") == 0) {
+    *pattern = internal::SPWM_REGISTER_TEST_PATTERN_TEAR;
   } else {
     return false;
   }
@@ -69,6 +71,19 @@ static bool ParseRegisterTestTextSpeed(const char *value,
     return false;
   }
   *step_pixels = static_cast<int>(parsed_value);
+  return true;
+}
+
+static bool ParseRegisterTestTextPosition(const char *value,
+                                          bool *middle_only) {
+  if (value == NULL || middle_only == NULL) return false;
+  if (strcmp(value, "cycle") == 0) {
+    *middle_only = false;
+  } else if (strcmp(value, "middle") == 0) {
+    *middle_only = true;
+  } else {
+    return false;
+  }
   return true;
 }
 
@@ -339,14 +354,16 @@ public:
   SPWMRegisterTestDemo(RGBMatrix *m, const char *panel_type,
                        internal::SPWM_Register_Test_Pattern pattern,
                        int text_scroll_step_pixels,
+                       bool text_scroll_middle_only,
                        uint64_t scan_filter)
       : DemoRunner(m), matrix_(m), panel_type_(panel_type), pattern_(pattern),
         text_scroll_step_pixels_(text_scroll_step_pixels),
+        text_scroll_middle_only_(text_scroll_middle_only),
         scan_filter_(scan_filter), succeeded_(false) {}
   void Run() override {
     succeeded_ = internal::RunSPWMRegisterTest(
         matrix_, panel_type_, pattern_, text_scroll_step_pixels_,
-        scan_filter_, &interrupt_received, &result_);
+        text_scroll_middle_only_, scan_filter_, &interrupt_received, &result_);
   }
   bool succeeded() const { return succeeded_; }
   const internal::SPWM_Register_Test_Result &result() const { return result_; }
@@ -356,6 +373,7 @@ private:
   const char *const panel_type_;
   const internal::SPWM_Register_Test_Pattern pattern_;
   const int text_scroll_step_pixels_;
+  const bool text_scroll_middle_only_;
   const uint64_t scan_filter_;
   bool succeeded_;
   internal::SPWM_Register_Test_Result result_;
@@ -1319,11 +1337,14 @@ static int usage(const char *progname) {
   fprintf(stderr, "Options:\n");
   fprintf(stderr,
           "\t-D <demo-nr>              : Always needs to be set\n"
-          "\t--register-test-pattern=<textscroll|gradient|align|cycle>\n"
+          "\t--register-test-pattern=<textscroll|tear|gradient|align|cycle>\n"
           "\t                          : Demo 15 test pattern (Default: textscroll)\n"
           "\t--register-test-textspeed=<pixels>\n"
           "\t                          : Demo 15 TEXTSCROLL pixels per "
           "refresh frame (Default: 1)\n"
+          "\t--register-test-text-position=<cycle|middle>\n"
+          "\t                          : Demo 15 TEXTSCROLL vertical band "
+          "selection (Default: cycle)\n"
           "\t--register-test-scan=<all|rows[,rows...]>\n"
           "\t                          : Demo 15 scan filter, e.g. 32 or "
           "1/32,1/16 (Default: all)\n"
@@ -1359,6 +1380,7 @@ int main(int argc, char *argv[]) {
   enum {
     OPT_REGISTER_TEST_PATTERN = 1000,
     OPT_REGISTER_TEST_TEXTSPEED,
+    OPT_REGISTER_TEST_TEXT_POSITION,
     OPT_REGISTER_TEST_SCAN,
   };
   static const struct option long_options[] = {
@@ -1366,6 +1388,8 @@ int main(int argc, char *argv[]) {
        OPT_REGISTER_TEST_PATTERN},
       {"register-test-textspeed", required_argument, NULL,
        OPT_REGISTER_TEST_TEXTSPEED},
+      {"register-test-text-position", required_argument, NULL,
+       OPT_REGISTER_TEST_TEXT_POSITION},
       {"register-test-scan", required_argument, NULL,
        OPT_REGISTER_TEST_SCAN},
       {NULL, 0, NULL, 0},
@@ -1378,6 +1402,8 @@ int main(int argc, char *argv[]) {
   bool register_test_pattern_set = false;
   int register_test_text_speed = 1;
   bool register_test_text_speed_set = false;
+  bool register_test_text_middle_only = false;
+  bool register_test_text_position_set = false;
   uint64_t register_test_scan_filter = 0;
   bool register_test_scan_set = false;
 
@@ -1413,7 +1439,7 @@ int main(int argc, char *argv[]) {
       if (!ParseRegisterTestPattern(optarg, &register_test_pattern)) {
         fprintf(stderr,
                 TERM_ERR "--register-test-pattern must be 'textscroll', "
-                         "'gradient', 'align', or 'cycle'.\n" TERM_NORM);
+                         "'tear', 'gradient', 'align', or 'cycle'.\n" TERM_NORM);
         return usage(argv[0]);
       }
       break;
@@ -1424,6 +1450,17 @@ int main(int argc, char *argv[]) {
         fprintf(stderr,
                 TERM_ERR "--register-test-textspeed must be a positive "
                          "integer.\n" TERM_NORM);
+        return usage(argv[0]);
+      }
+      break;
+
+    case OPT_REGISTER_TEST_TEXT_POSITION:
+      register_test_text_position_set = true;
+      if (!ParseRegisterTestTextPosition(
+              optarg, &register_test_text_middle_only)) {
+        fprintf(stderr,
+                TERM_ERR "--register-test-text-position must be 'cycle' "
+                         "or 'middle'.\n" TERM_NORM);
         return usage(argv[0]);
       }
       break;
@@ -1464,6 +1501,13 @@ int main(int argc, char *argv[]) {
   if (register_test_text_speed_set && demo != 15) {
     fprintf(stderr,
             TERM_ERR "--register-test-textspeed is only available with "
+                     "-D 15.\n" TERM_NORM);
+    return usage(argv[0]);
+  }
+
+  if (register_test_text_position_set && demo != 15) {
+    fprintf(stderr,
+            TERM_ERR "--register-test-text-position is only available with "
                      "-D 15.\n" TERM_NORM);
     return usage(argv[0]);
   }
@@ -1598,6 +1642,7 @@ int main(int argc, char *argv[]) {
           new SPWMRegisterTestDemo(matrix, matrix_options.panel_type,
                                    register_test_pattern,
                                    register_test_text_speed,
+                                   register_test_text_middle_only,
                                    register_test_scan_filter);
       demo_runner = register_test_demo;
       break;

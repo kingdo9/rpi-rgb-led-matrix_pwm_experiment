@@ -17,6 +17,7 @@ enum SPWM_Register_Test_Pattern {
   SPWM_REGISTER_TEST_PATTERN_ALIGN,
   SPWM_REGISTER_TEST_PATTERN_CYCLE,
   SPWM_REGISTER_TEST_PATTERN_TEXTSCROLL,
+  SPWM_REGISTER_TEST_PATTERN_TEAR,
 };
 
 // Catalog-backed snapshot of the last profile whose test scene was displayed.
@@ -42,10 +43,13 @@ bool ParseSPWMRegisterTestScanFilter(const char *value,
 
 // Navigate the selected panel's runtime register catalog until interrupted.
 // TEXTSCROLL moves by text_scroll_step_pixels per presented refresh frame.
+// text_scroll_middle_only keeps each new pass in the middle display band.
+// TEAR moves its center-seam marker once per presented refresh frame.
 // Return false when the catalog cannot be tested or a profile fails to apply.
 bool RunSPWMRegisterTest(RGBMatrix *matrix, const char *panel_type,
                          SPWM_Register_Test_Pattern pattern,
                          int text_scroll_step_pixels,
+                         bool text_scroll_middle_only,
                          uint64_t scan_filter,
                          volatile bool *interrupt_received,
                          SPWM_Register_Test_Result *result);
