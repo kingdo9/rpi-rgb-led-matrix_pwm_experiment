@@ -50,9 +50,9 @@ set(RGBMATRIX_SOURCES
     ${RGBMATRIX_SOURCE_DIR}/rp1/rp1_pio_support.c
     ${RGBMATRIX_SOURCE_DIR}/rp1/rp1_rio_backend.cc
     ${RGBMATRIX_SOURCE_DIR}/rp1/rp1_spwm_gpio.cc
-    ${RGBMATRIX_SOURCE_DIR}/spwm-helpers.cc
-    ${RGBMATRIX_SOURCE_DIR}/spwm-panel-config.cc
-    ${RGBMATRIX_SOURCE_DIR}/spwm-panel-registers.cc
+    ${RGBMATRIX_SOURCE_DIR}/spwm/spwm-helpers.cc
+    ${RGBMATRIX_SOURCE_DIR}/spwm/spwm-panel-config.cc
+    ${RGBMATRIX_SOURCE_DIR}/spwm/spwm-panel-registers.cc
     ${RGBMATRIX_SOURCE_DIR}/spwm/registertest/spwm-register-profile-loader.cc
     ${RGBMATRIX_SOURCE_DIR}/thread.cc
 )

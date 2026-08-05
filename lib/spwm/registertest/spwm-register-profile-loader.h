@@ -2,7 +2,7 @@
 #ifndef RGBMATRIX_SPWM_REGISTER_PROFILE_LOADER_H
 #define RGBMATRIX_SPWM_REGISTER_PROFILE_LOADER_H
 
-#include "../../spwm-helpers.h"
+#include "../spwm-helpers.h"
 
 #include <memory>
 #include <stdint.h>

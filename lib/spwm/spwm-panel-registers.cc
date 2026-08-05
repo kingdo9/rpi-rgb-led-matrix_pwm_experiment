@@ -1,6 +1,6 @@
 // -*- mode: c++; c-basic-offset: 2; indent-tabs-mode: nil; -*-
 #include "spwm-panel-registers.h"
-#include "spwm/registertest/spwm-register-profile-loader.h"
+#include "registertest/spwm-register-profile-loader.h"
 
 #include <stddef.h>
 #include <stdint.h>

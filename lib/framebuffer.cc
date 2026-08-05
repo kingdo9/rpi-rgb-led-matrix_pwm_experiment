@@ -32,7 +32,7 @@
 
 #include "gpio.h"
 #include "rp1/rp1_backend.h"
-#include "spwm-helpers.h"
+#include "spwm/spwm-helpers.h"
 #include "../include/graphics.h"
 
 namespace rgb_matrix {

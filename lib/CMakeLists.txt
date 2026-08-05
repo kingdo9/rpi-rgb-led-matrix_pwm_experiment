@@ -49,9 +49,9 @@ set(RGBMATRIX_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/rp1/rp1_pio_support.c
     ${CMAKE_CURRENT_SOURCE_DIR}/rp1/rp1_rio_backend.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/rp1/rp1_spwm_gpio.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/spwm-helpers.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/spwm-panel-config.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/spwm-panel-registers.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/spwm/spwm-helpers.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/spwm/spwm-panel-config.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/spwm/spwm-panel-registers.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/spwm/registertest/spwm-register-profile-loader.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/thread.cc
 )

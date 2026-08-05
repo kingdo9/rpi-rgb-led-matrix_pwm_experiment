@@ -11,7 +11,8 @@ OBJECTS=gpio.o led-matrix.o options-initialize.o framebuffer.o \
 	content-streamer.o content-streamer-c.o \
 	rp1/rp1_spwm_gpio.o rp1/rp1_backend.o rp1/rp1_pio_backend.o rp1/rp1_pio_support.o \
 	rp1/rp1_rio_backend.o \
-    spwm-helpers.o spwm-panel-config.o spwm-panel-registers.o \
+    spwm/spwm-helpers.o spwm/spwm-panel-config.o \
+    spwm/spwm-panel-registers.o \
     spwm/registertest/spwm-register-profile-loader.o
 
 # The static library keeps the loader free of libdl. The shared library uses a
@@ -202,18 +203,18 @@ led-matrix.o: led-matrix.cc $(INCDIR)/led-matrix.h
 thread.o : thread.cc $(INCDIR)/thread.h
 framebuffer.o: framebuffer.cc framebuffer-internal.h
 graphics.o: graphics.cc utf8-internal.h
-options-initialize.o: options-initialize.cc spwm-panel-registers.h
-spwm-panel-registers.o: \
-	spwm-panel-registers.cc spwm-panel-registers.h \
+options-initialize.o: options-initialize.cc spwm/spwm-panel-registers.h
+spwm/spwm-panel-registers.o: \
+	spwm/spwm-panel-registers.cc spwm/spwm-panel-registers.h \
 	spwm/registertest/spwm-register-profile-loader.h
 
 spwm/registertest/spwm-register-profile-loader.o: \
 	spwm/registertest/spwm-register-profile-loader.cc \
-	spwm/registertest/spwm-register-profile-loader.h spwm-helpers.h
+	spwm/registertest/spwm-register-profile-loader.h spwm/spwm-helpers.h
 
 $(SHARED_PROFILE_LOADER_OBJECT): \
 	spwm/registertest/spwm-register-profile-loader.cc \
-	spwm/registertest/spwm-register-profile-loader.h spwm-helpers.h \
+	spwm/registertest/spwm-register-profile-loader.h spwm/spwm-helpers.h \
 	compiler-flags
 	$(CXX) -I$(INCDIR) $(CXXFLAGS) \
 		-DRGBMATRIX_SPWM_PROFILE_MODULE_RELATIVE=1 -D_GNU_SOURCE \

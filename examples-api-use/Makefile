@@ -39,7 +39,7 @@ $(SPWM_REGISTER_TEST_OBJECT): \
 	$(SPWM_REGISTER_TEST_DIR)/spwm-register-profile-loader.h \
 	$(RGB_INCDIR)/graphics.h \
 	$(RGB_INCDIR)/led-matrix.h \
-	$(RGB_LIBDIR)/spwm-helpers.h
+	$(RGB_LIBDIR)/spwm/spwm-helpers.h
 	$(CXX) -I$(RGB_INCDIR) -I$(RGB_LIBDIR) $(CXXFLAGS) -c -o $@ $<
 
 minimal-example : minimal-example.o

@@ -28,8 +28,8 @@
 
 #include "multiplex-mappers-internal.h"
 #include "framebuffer-internal.h"
-#include "spwm-helpers.h"
-#include "spwm-panel-registers.h"
+#include "spwm/spwm-helpers.h"
+#include "spwm/spwm-panel-registers.h"
 
 #include "gpio.h"
 

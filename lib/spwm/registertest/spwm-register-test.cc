@@ -3,7 +3,7 @@
 
 #include "graphics.h"
 #include "led-matrix.h"
-#include "spwm-helpers.h"
+#include "../spwm-helpers.h"
 #include "spwm/registertest/spwm-register-profile-loader.h"
 
 #include <chrono>

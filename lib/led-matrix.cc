@@ -34,7 +34,7 @@
 #include "thread.h"
 #include "framebuffer-internal.h"
 #include "multiplex-mappers-internal.h"
-#include "spwm-helpers.h"
+#include "spwm/spwm-helpers.h"
 
 // C wrapper to reset global GPIO bookkeeping from external callers.
 extern "C" void ledmatrix_reset_global_gpio();

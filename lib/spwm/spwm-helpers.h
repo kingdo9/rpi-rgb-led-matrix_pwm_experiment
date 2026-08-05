@@ -7,8 +7,8 @@
 #include <stdint.h>
 #include <vector>
 
-#include "gpio.h"
-#include "hardware-mapping.h"
+#include "../gpio.h"
+#include "../hardware-mapping.h"
 
 namespace rgb_matrix {
 namespace internal {

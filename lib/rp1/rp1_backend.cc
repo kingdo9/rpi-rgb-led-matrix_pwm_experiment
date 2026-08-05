@@ -4,7 +4,7 @@
 #include "rp1_pio_backend.h"
 #include "rp1_rio_backend.h"
 #include "../hardware-mapping.h"
-#include "../spwm-helpers.h"
+#include "../spwm/spwm-helpers.h"
 
 #include <stdio.h>
 

@@ -2,7 +2,7 @@
 
 #include "spwm-helpers.h"
 #include "spwm-panel-config.h"
-#include "framebuffer-internal.h"
+#include "../framebuffer-internal.h"
 
 #include <algorithm>
 #include <atomic>
