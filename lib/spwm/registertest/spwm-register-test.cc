@@ -25,7 +25,6 @@ namespace internal {
 namespace {
 
 const int kSceneDurationMs = 4000;
-const int kEscapeSequenceIdleTimeoutMs = 100;
 const char kTextScrollMessage[] = "Register Test";
 
 const char *const kRegisterTestPanelNames[] = {
@@ -171,7 +170,6 @@ class TerminalRegisterTestInput {
   // Check once without delaying the next text-scroll frame. SwapOnVSync()
   // supplies that frame's cadence, including any --led-limit-refresh cap.
   RegisterTestInput PollInput() {
-    ExpireStaleEscapeSequence();
     if (!pending_actions_.empty()) return TakeNextAction();
 
     RegisterTestInput input;
@@ -203,13 +201,6 @@ class TerminalRegisterTestInput {
   }
 
  private:
-  void ExpireStaleEscapeSequence() {
-    if (escape_state_ != 0 &&
-        std::chrono::steady_clock::now() >= escape_deadline_) {
-      escape_state_ = 0;
-    }
-  }
-
   RegisterTestInput TakeNextAction() {
     const RegisterTestInput input = pending_actions_.front();
     pending_actions_.pop_front();
@@ -238,11 +229,6 @@ class TerminalRegisterTestInput {
   // partial escape sequence across terminal reads.
   void ConsumeByte(char input_byte) {
     const unsigned char byte = static_cast<unsigned char>(input_byte);
-    if (escape_state_ != 0 || byte == 0x1b) {
-      escape_deadline_ =
-          std::chrono::steady_clock::now() +
-          std::chrono::milliseconds(kEscapeSequenceIdleTimeoutMs);
-    }
     if (escape_state_ == 0) {
       if (byte == 0x1b) {
         escape_state_ = 1;
@@ -283,7 +269,6 @@ class TerminalRegisterTestInput {
 
   bool enabled_;
   int escape_state_;
-  std::chrono::steady_clock::time_point escape_deadline_;
   struct termios original_settings_;
   std::deque<RegisterTestInput> pending_actions_;
 };

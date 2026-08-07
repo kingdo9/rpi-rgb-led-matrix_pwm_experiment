@@ -100,20 +100,20 @@ static const SPWM_Panel_Settings SPWM_FM6373_SETTINGS = []() {
   return spwm_settings;
 }();
 
-// FM6373 frame start: emit LAT3, LAT11, and LAT14 before the register blocks.
-// The shared init emitter starts the leading OE burst after this final leading
-// LAT, while the measured spacers preserve the remaining frame cadence.
+// FM6373 frame start: emit LAT bursts of 3, 11, and 14 clocks, each with an
+// optional trailing LAT-low spacer count, then stream register blocks 1-5 with
+// block 3 coming from the rotating RGB register sequence.
 
 static const SPWM_Init_Step SPWM_FM6373_INIT_STEPS[] = {
     // LAT pulses | Row lines left at 0 | Spacer CLKs.
-    {SPWM_INIT_STEP_LAT_PULSES, 3, 0, 12},
-    {SPWM_INIT_STEP_LAT_PULSES, 11, 0, 3},
-    {SPWM_INIT_STEP_LAT_PULSES, 14, 0, 9},
-    {SPWM_INIT_STEP_REGISTER, 1, 0, 0},
-    {SPWM_INIT_STEP_REGISTER, 2, 0, 0},
-    {SPWM_INIT_STEP_RGB_REGISTER, 3, 0, 0},
-    {SPWM_INIT_STEP_REGISTER, 4, 0, 0},
-    {SPWM_INIT_STEP_REGISTER, 5, 0, 0,}
+    {SPWM_INIT_STEP_LAT_PULSES, 3, 0, 0},   // 3 LAT pulses, row lines left at 0, no spacer clocks.
+    {SPWM_INIT_STEP_LAT_PULSES, 11, 0, 0},  // 11 LAT pulses, row lines left at 0, no spacer clocks.
+    {SPWM_INIT_STEP_LAT_PULSES, 14, 0, 0},  // 14 LAT pulses, row lines left at 0, no spacer clocks.
+    {SPWM_INIT_STEP_REGISTER, 1, 0, 0},     // Send fixed register 1, row lines left at 0, no spacer clocks.
+    {SPWM_INIT_STEP_REGISTER, 2, 0, 0},     // Send fixed register 2, row lines left at 0, no spacer clocks.
+    {SPWM_INIT_STEP_RGB_REGISTER, 3, 0, 0}, // Send RGB register 3, row lines left at 0, no spacer clocks.
+    {SPWM_INIT_STEP_REGISTER, 4, 0, 0},     // Send fixed register 4, row lines left at 0, no spacer clocks.
+    {SPWM_INIT_STEP_REGISTER, 5, 0, 0},     // Send fixed register 5, row lines left at 0, no spacer clocks.
 };
 
 static const SPWM_Init_Sequence SPWM_FM6373_INIT_SEQUENCE =
@@ -131,20 +131,21 @@ static const SPWM_Panel_Settings SPWM_ICND1065L_SETTINGS = []() {
   spwm_settings.auto_tune_frames = 0;
   spwm_settings.auto_tune_max_step_clks = 0;
   spwm_settings.first_oe_clk_length = 12;
-  spwm_settings.end_of_frame_extra_row_cycles = 1;
+  spwm_settings.end_of_frame_extra_row_cycles = 0;
   spwm_settings.frame_end_sleep_us = 200;
   spwm_settings.oe_during_upload_clk_count = 52;
   spwm_settings.oe_after_upload_clk_count = 52;
   spwm_settings.oe_clk_look_behind = 0;
   spwm_settings.oe_clk_length = 4;
-  spwm_settings.rgb_upload_lat_spacer_clk_count = 9;
   spwm_settings.shiftreg_row_select_a_pulse_clk_count = 2;
   spwm_settings.oe_style = SPWM_OE_STYLE_FM6373;
   return spwm_settings;
 }();
 
-// ICND1065L emits LAT3, LAT11, and LAT14 before its register blocks. The shared
-// init emitter starts the leading OE burst after this final leading LAT.
+// ICND1065L frame start mirrors FM6373: emit LAT bursts of 3, 11, and 14
+// clocks, each with an optional trailing LAT-low spacer count, then stream
+// register blocks 1-5 with block 3 coming from the rotating RGB register
+// sequence.
 static const SPWM_Init_Step SPWM_ICND1065L_INIT_STEPS[] = {
     // LAT pulses | Row lines left at 0 | Spacer CLKs.
     {SPWM_INIT_STEP_LAT_PULSES, 3, 0, 12},
@@ -167,12 +168,6 @@ SPWM_Panel_Settings spwm_resolve_icnd1065l_settings(int spwm_columns) {
   SPWM_Panel_Settings spwm_settings = SPWM_ICND1065L_SETTINGS;
   const int spwm_resolved_columns =
       spwm_columns > 0 ? spwm_columns : spwm_settings.default_columns;
-  if (spwm_resolved_columns == 172) {
-    // Together with its synchronized frame start, the 172x86/43-scan panel
-    // needs at least 12 complete post-upload scans; 11 leaves its multiplexed
-    // halves on different moving frames.
-    spwm_settings.end_of_frame_extra_row_cycles = 12;
-  }
   spwm_apply_missing_column_layout(&spwm_settings, spwm_resolved_columns, 172,
                                    SPWM_SPARSE_172_COLUMN_LAYOUT);
   return spwm_settings;

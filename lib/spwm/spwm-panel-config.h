@@ -31,7 +31,7 @@ struct SPWM_Init_Step {
 // Ordered list of init steps emitted before regular RGB data upload begins.
 struct SPWM_Init_Sequence {
   const SPWM_Init_Step *steps;  // Backing storage for the init steps.
-  size_t step_count;            // Number of entries in `steps`.
+  size_t step_count;          // Number of entries in `steps`.
 };
 
 // Complete description of an SPWM-capable panel type, including geometry, init

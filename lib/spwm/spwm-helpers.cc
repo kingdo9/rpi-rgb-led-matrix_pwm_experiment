@@ -567,34 +567,6 @@ struct SPWM_Scan_State {
   bool shiftreg_row_bits_valid;
 };
 
-// Once the final leading init LAT has completed, one scan state carries the
-// leading OE burst through the remaining register clocks and framebuffer
-// upload. Direct panels update A-E through their row setter; blank-clock panels
-// retain their shift-register waveform.
-struct SPWM_Init_Scan_Context {
-  bool started;
-  bool leading_oe_pending;
-  bool scan_active;
-  bool blank_clock_row_transport;
-  bool type2_shiftreg_transport;
-  RowAddressSetter *row_setter;
-  gpio_bits_t rgb_mask;
-  int scan_rows;
-  int initial_oe_clks;
-  int resume_phase;
-  const SPWM_Scan_Config *scan_config;
-  SPWM_OE_Gate_State *oe_gate;
-  SPWM_Scan_State *scan_state;
-};
-
-void spwm_emit_init_clock(GPIO *io, const HardwareMapping &h,
-                          gpio_bits_t spwm_out_bits,
-                          gpio_bits_t spwm_write_mask,
-                          SPWM_Init_Scan_Context *spwm_init_scan);
-void spwm_start_synchronized_initial_oe(
-    GPIO *io, const HardwareMapping &h,
-    SPWM_Init_Scan_Context *spwm_init_scan);
-
 typedef bool (*SPWM_Scan_Pre_Clock_Handler)(
     GPIO *io, const HardwareMapping &h,
     RowAddressSetter *spwm_row_setter, int spwm_double_rows,
@@ -1231,34 +1203,31 @@ void spwm_begin_register_stream(GPIO *io, const HardwareMapping &h,
   io->ClearBits(spwm_rgb_mask);
 }
 
-// Finish a register block by clearing LAT and emitting any requested LAT-low
-// spacer clocks. Conventional init updates the row bits; synchronized init
-// leaves them under the active direct or shift-register scan control.
+// Finish a register block by clearing LAT, emitting any requested LAT-low
+// spacer clocks, and updating the row bits. Leave CLK low so this does not add
+// an unrequested shift edge after the register latch.
 void spwm_end_register_stream(GPIO *io, const HardwareMapping &h,
                               gpio_bits_t spwm_rgb_mask, uint8_t spwm_row,
-                              int spwm_space_clocks,
-                              SPWM_Init_Scan_Context *spwm_init_scan) {
+                              int spwm_space_clocks) {
   io->ClearBits(h.strobe);
   if (spwm_space_clocks > 0) {
     io->WriteMaskedBits(0, spwm_rgb_mask);
     for (int spwm_clock_index = 0;
          spwm_clock_index < spwm_space_clocks;
          ++spwm_clock_index) {
-      spwm_emit_init_clock(io, h, 0, 0, spwm_init_scan);
+      io->SetBits(h.clock);
+      io->ClearBits(h.clock);
     }
   }
   io->WriteMaskedBits(0, spwm_rgb_mask);
-  if (spwm_init_scan == nullptr || !spwm_init_scan->started) {
-    spwm_set_row_bits(io, h, spwm_row);
-  }
+  spwm_set_row_bits(io, h, spwm_row);
 }
 
 // Emit any extra LAT sections that occur after a register payload has already
 // been shifted. RGB lines stay low during these postamble clocks.
 void spwm_send_register_extra_lat_clocks(
     GPIO *io, const HardwareMapping &h, gpio_bits_t spwm_rgb_mask,
-    const SPWM_Register_Timing &spwm_timing,
-    SPWM_Init_Scan_Context *spwm_init_scan) {
+    const SPWM_Register_Timing &spwm_timing) {
   if (spwm_timing.lat_clocks == nullptr || spwm_timing.lat_count <= 1) {
     return;
   }
@@ -1272,7 +1241,8 @@ void spwm_send_register_extra_lat_clocks(
       for (int spwm_clock_index = 0;
            spwm_clock_index < spwm_timing.lat_space_clocks;
            ++spwm_clock_index) {
-        spwm_emit_init_clock(io, h, 0, 0, spwm_init_scan);
+        io->SetBits(h.clock);
+        io->ClearBits(h.clock);
       }
     }
 
@@ -1283,18 +1253,17 @@ void spwm_send_register_extra_lat_clocks(
     for (int spwm_clock_index = 0;
          spwm_clock_index < spwm_lat_clocks;
          ++spwm_clock_index) {
-      spwm_emit_init_clock(io, h, 0, 0, spwm_init_scan);
+      io->SetBits(h.clock);
+      io->ClearBits(h.clock);
     }
   }
 }
 
 // Emit a LAT-high clock burst used by panel-specific init sequences, followed
-// by any requested LAT-low spacer clocks.
+// by any requested LAT-low spacer clocks before leaving the row lines idle.
 void spwm_send_lat_pulses(GPIO *io, const HardwareMapping &h,
                           uint8_t spwm_row, int spwm_pulses,
-                          int spwm_space_clocks,
-                          bool spwm_start_initial_oe,
-                          SPWM_Init_Scan_Context *spwm_init_scan) {
+                          int spwm_space_clocks) {
   const SPWM_Register_Output_Masks spwm_masks =
       spwm_get_register_output_masks(h);
 
@@ -1306,24 +1275,19 @@ void spwm_send_lat_pulses(GPIO *io, const HardwareMapping &h,
   for (int spwm_pulse_index = 0;
        spwm_pulse_index < spwm_pulses;
        ++spwm_pulse_index) {
-    spwm_emit_init_clock(io, h, 0, 0, spwm_init_scan);
+    io->SetBits(h.clock);
+    io->ClearBits(h.clock);
   }
 
   io->ClearBits(h.strobe);
-  if (spwm_start_initial_oe) {
-    spwm_start_synchronized_initial_oe(io, h, spwm_init_scan);
-  }
   for (int spwm_clock_index = 0;
        spwm_clock_index < spwm_space_clocks;
        ++spwm_clock_index) {
-    spwm_emit_init_clock(io, h, 0, 0, spwm_init_scan);
-  }
-  if (spwm_init_scan != nullptr && spwm_init_scan->started) {
-    spwm_emit_init_clock(io, h, 0, 0, spwm_init_scan);
-  } else {
     io->SetBits(h.clock);
-    spwm_set_row_bits(io, h, spwm_row);
+    io->ClearBits(h.clock);
   }
+  io->SetBits(h.clock);
+  spwm_set_row_bits(io, h, spwm_row);
 }
 
 // Shift one fixed register block into the panel, overlap LAT with the tail data
@@ -1333,12 +1297,10 @@ void spwm_send_lat_pulses(GPIO *io, const HardwareMapping &h,
 // Purpose: Shift one fixed SPWM register block into the panel and latch it.
 // Inputs: GPIO interface, hardware mapping, 1-based register index, row bits.
 // Outputs: None.
-// Side effects: Drives RGB/LAT/CLK and, outside synchronized init, leaves the
-// requested row on A-E.
+// Side effects: Drives RGB/LAT/CLK and leaves the requested row on A-E.
 void spwm_send_register(GPIO *io, const HardwareMapping &h,
                         uint8_t spwm_register_index, uint8_t spwm_row,
-                        int spwm_space_clocks,
-                        SPWM_Init_Scan_Context *spwm_init_scan) {
+                        int spwm_space_clocks) {
   SPWM_Config &spwm_config = spwm_get_runtime_state().config;
   const SPWM_Register_Data *spwm_register_data =
       spwm_config.spwm_get_register_data(spwm_register_index);
@@ -1380,16 +1342,16 @@ void spwm_send_register(GPIO *io, const HardwareMapping &h,
           spwm_has_fixed_rgb_frame
               ? spwm_fixed_rgb_gpio_bits.word_gpio_bits[spwm_bit]
               : ((spwm_word & (1u << spwm_bit)) ? spwm_masks.all_mask : 0);
-      spwm_emit_init_clock(io, h, spwm_data_bits, spwm_masks.all_mask,
-                           spwm_init_scan);
+      io->WriteMaskedBits(spwm_data_bits, spwm_masks.all_mask);
+      io->SetBits(h.clock);
+      io->ClearBits(h.clock);
       --spwm_clocks_remaining;
     }
   }
 
-  spwm_send_register_extra_lat_clocks(io, h, spwm_masks.all_mask, spwm_timing,
-                                       spwm_init_scan);
+  spwm_send_register_extra_lat_clocks(io, h, spwm_masks.all_mask, spwm_timing);
   spwm_end_register_stream(io, h, spwm_masks.all_mask, spwm_row,
-                           spwm_space_clocks, spwm_init_scan);
+                           spwm_space_clocks);
 }
 
 // Shift the rotating RGB register block used once per frame by FM6373-style
@@ -1401,8 +1363,7 @@ void spwm_send_register(GPIO *io, const HardwareMapping &h,
 // Side effects: Advances the RGB register sequence and drives GPIO lines.
 void spwm_send_rgb_register(GPIO *io, const HardwareMapping &h,
                             size_t spwm_register_index, uint8_t spwm_row,
-                            int spwm_space_clocks,
-                            SPWM_Init_Scan_Context *spwm_init_scan) {
+                            int spwm_space_clocks) {
   SPWM_Config &spwm_config = spwm_get_runtime_state().config;
   if (!spwm_config.spwm_has_rgb_register(spwm_register_index)) return;
 
@@ -1437,43 +1398,21 @@ void spwm_send_rgb_register(GPIO *io, const HardwareMapping &h,
         io->SetBits(h.strobe);
       }
 
-      spwm_emit_init_clock(io, h,
-                           spwm_rgb_gpio_bits.word_gpio_bits[spwm_bit],
-                           spwm_masks.all_mask, spwm_init_scan);
+      io->WriteMaskedBits(spwm_rgb_gpio_bits.word_gpio_bits[spwm_bit],
+                          spwm_masks.all_mask);
+      io->SetBits(h.clock);
+      io->ClearBits(h.clock);
       --spwm_clocks_remaining;
     }
   }
 
-  spwm_send_register_extra_lat_clocks(io, h, spwm_masks.all_mask, spwm_timing,
-                                       spwm_init_scan);
+  spwm_send_register_extra_lat_clocks(io, h, spwm_masks.all_mask, spwm_timing);
   spwm_end_register_stream(io, h, spwm_masks.all_mask, spwm_row,
-                           spwm_space_clocks, spwm_init_scan);
-}
-
-// Find the final LAT burst in the leading prefix before the first register
-// upload. FM6353 has additional LAT preambles between registers; those are
-// part of register transfer rather than a later frame-start boundary.
-size_t spwm_find_initial_oe_start_step(
-    const SPWM_Init_Sequence &spwm_init_sequence) {
-  size_t spwm_last_leading_lat = spwm_init_sequence.step_count;
-  for (size_t spwm_step_index = 0;
-       spwm_step_index < spwm_init_sequence.step_count;
-       ++spwm_step_index) {
-    const SPWM_Init_Step_Type spwm_step_type =
-        spwm_init_sequence.steps[spwm_step_index].type;
-    if (spwm_step_type == SPWM_INIT_STEP_LAT_PULSES) {
-      spwm_last_leading_lat = spwm_step_index;
-    } else if (spwm_step_type == SPWM_INIT_STEP_REGISTER ||
-               spwm_step_type == SPWM_INIT_STEP_RGB_REGISTER) {
-      break;
-    }
-  }
-  return spwm_last_leading_lat;
+                           spwm_space_clocks);
 }
 
 // Run the panel startup script made up of LAT bursts and register uploads.
-void spwm_emit_init_sequence(GPIO *io, const HardwareMapping &h,
-                             SPWM_Init_Scan_Context *spwm_init_scan) {
+void spwm_emit_init_sequence(GPIO *io, const HardwareMapping &h) {
   SPWM_Runtime_State &spwm_runtime_state = spwm_get_runtime_state();
   if (spwm_runtime_state.init_sequence.steps == nullptr ||
       spwm_runtime_state.init_sequence.step_count == 0) {
@@ -1484,8 +1423,6 @@ void spwm_emit_init_sequence(GPIO *io, const HardwareMapping &h,
   spwm_apply_pending_rgb_register_profile();
   spwm_apply_pending_fixed_register_profile();
 
-  const size_t spwm_initial_oe_start_step =
-      spwm_find_initial_oe_start_step(spwm_runtime_state.init_sequence);
   for (size_t spwm_step_index = 0;
        spwm_step_index < spwm_runtime_state.init_sequence.step_count;
        ++spwm_step_index) {
@@ -1494,13 +1431,11 @@ void spwm_emit_init_sequence(GPIO *io, const HardwareMapping &h,
     switch (spwm_step.type) {
       case SPWM_INIT_STEP_LAT_PULSES:
         spwm_send_lat_pulses(io, h, spwm_step.row, spwm_step.value,
-                             spwm_step.space_clocks,
-                             spwm_step_index == spwm_initial_oe_start_step,
-                             spwm_init_scan);
+                             spwm_step.space_clocks);
         break;
       case SPWM_INIT_STEP_REGISTER:
         spwm_send_register(io, h, spwm_step.value, spwm_step.row,
-                           spwm_step.space_clocks, spwm_init_scan);
+                           spwm_step.space_clocks);
         if (spwm_fixed_register_profile_being_emitted != nullptr &&
             spwm_step.value > 0 &&
             spwm_step.value <= SPWM_FORCE_REGISTER_COUNT) {
@@ -1510,7 +1445,7 @@ void spwm_emit_init_sequence(GPIO *io, const HardwareMapping &h,
         break;
       case SPWM_INIT_STEP_RGB_REGISTER:
         spwm_send_rgb_register(io, h, spwm_step.value, spwm_step.row,
-                               spwm_step.space_clocks, spwm_init_scan);
+                               spwm_step.space_clocks);
         if (spwm_rgb_register_profile_being_emitted != nullptr &&
             spwm_rgb_register_profile_words_remaining > 0 &&
             spwm_step.value ==
@@ -1665,43 +1600,6 @@ void spwm_clock_pulse(GPIO *io, const HardwareMapping &h,
   io->ClearBits(h.clock);
 
   if (spwm_gate != nullptr && spwm_gate->active && spwm_gate->remaining > 0) {
-    if (spwm_gate->pulse_each_clock) {
-      io->ClearBits(h.output_enable);
-    }
-    if (--spwm_gate->remaining == 0) {
-      if (!spwm_gate->pulse_each_clock) {
-        io->ClearBits(h.output_enable);
-      }
-      spwm_gate->active = false;
-      spwm_auto_tune_on_oe_pulse_end(spwm_gate->auto_tune,
-                                     spwm_gate->section);
-    }
-  }
-}
-
-// Emit a synchronized init clock without an RGB write. Keeping this separate
-// avoids adding a mask branch to the normal per-pixel upload clock path.
-void spwm_clock_pulse_without_data_write(
-    GPIO *io, const HardwareMapping &h, SPWM_OE_Gate_State *spwm_gate) {
-  if (spwm_gate != nullptr && spwm_gate->remaining > 0 &&
-      !spwm_gate->active) {
-    spwm_gate->active = true;
-    if (spwm_gate->capture_start_time) {
-      spwm_record_initial_oe_pulse_start();
-      spwm_gate->capture_start_time = false;
-    }
-  }
-
-  if (spwm_gate != nullptr && spwm_gate->active &&
-      spwm_gate->remaining > 0) {
-    io->SetBits(h.output_enable);
-  }
-
-  io->SetBits(h.clock);
-  io->ClearBits(h.clock);
-
-  if (spwm_gate != nullptr && spwm_gate->active &&
-      spwm_gate->remaining > 0) {
     if (spwm_gate->pulse_each_clock) {
       io->ClearBits(h.output_enable);
     }
@@ -2505,8 +2403,7 @@ void spwm_upload_framebuffer_blocks(
             }
           }
         }
-        spwm_emit_block(spwm_block_gpio_bits,
-                        spwm_chip == spwm_last_chip);
+        spwm_emit_block(spwm_block_gpio_bits, spwm_chip == spwm_last_chip);
       }
     }
   }
@@ -3060,127 +2957,6 @@ bool spwm_start_initial_oe_phase(
   return false;
 }
 
-// Arm the leading OE pulse after the final leading init LAT. Regular scan is
-// held off until this pulse drains, then continues through the remaining init
-// and framebuffer clocks using the selected row-address transport.
-void spwm_start_synchronized_initial_oe(
-    GPIO *io, const HardwareMapping &h,
-    SPWM_Init_Scan_Context *spwm_init_scan) {
-  if (io == nullptr || spwm_init_scan == nullptr ||
-      spwm_init_scan->started ||
-      spwm_init_scan->scan_config == nullptr ||
-      spwm_init_scan->oe_gate == nullptr ||
-      spwm_init_scan->scan_state == nullptr ||
-      (!spwm_init_scan->blank_clock_row_transport &&
-       spwm_init_scan->row_setter == nullptr) ||
-      spwm_init_scan->scan_rows <= 0 ||
-      spwm_init_scan->scan_config->row_clks <= 0) {
-    return;
-  }
-
-  SPWM_OE_Gate_State *const spwm_oe_gate = spwm_init_scan->oe_gate;
-  SPWM_Scan_State *const spwm_scan_state = spwm_init_scan->scan_state;
-  const SPWM_Scan_Config &spwm_scan_config =
-      *spwm_init_scan->scan_config;
-  const int spwm_row_clks = spwm_scan_config.row_clks;
-  const int spwm_initial_oe_clks =
-      std::max(0, spwm_init_scan->initial_oe_clks);
-  const int spwm_oe_arm_phase =
-      spwm_resolve_oe_arm_phase(spwm_scan_config);
-
-  spwm_init_scan->started = true;
-  if (!spwm_init_scan->blank_clock_row_transport) {
-    spwm_init_scan->row_setter->SetRowAddress(
-        io, spwm_scan_state->row);
-  }
-  if (spwm_scan_config.row_before_oe) {
-    // FM6363-style scans previously shared their leading OE with the first
-    // upload clocks, then resumed at the row-advance phase. Preserve that
-    // ordering now that their scan starts inside the init sequence.
-    spwm_init_scan->resume_phase = spwm_scan_config.advance_phase;
-  } else {
-    // Type 2 resumes one clock early to retain its tested OE/B overlap. Other
-    // transports resume after every leading-OE clock has completed.
-    const int spwm_resume_phase_adjustment =
-        spwm_init_scan->type2_shiftreg_transport ? spwm_row_clks - 1 : 0;
-    const int64_t spwm_resume_phase =
-        static_cast<int64_t>(spwm_oe_arm_phase) +
-        (spwm_initial_oe_clks % spwm_row_clks) +
-        spwm_resume_phase_adjustment;
-    spwm_init_scan->resume_phase =
-        static_cast<int>(spwm_resume_phase % spwm_row_clks);
-  }
-  if (spwm_scan_config.oe_clks > 0) {
-    spwm_scan_state->oe_primed = true;
-  }
-
-  if (spwm_initial_oe_clks > 0) {
-    io->ClearBits(spwm_init_scan->rgb_mask | h.strobe | h.clock);
-    spwm_wait_until_initial_oe_pulse_target();
-    spwm_oe_gate->capture_start_time = true;
-    spwm_arm_oe_gate(spwm_oe_gate, spwm_initial_oe_clks);
-  }
-
-  spwm_init_scan->leading_oe_pending =
-      spwm_oe_gate_is_pending(spwm_oe_gate);
-  spwm_init_scan->scan_active = !spwm_init_scan->leading_oe_pending;
-  if (spwm_init_scan->scan_active) {
-    spwm_scan_state->phase = spwm_init_scan->resume_phase;
-    spwm_oe_gate->section = SPWM_AUTO_TUNE_SECTION_UPLOAD;
-  }
-}
-
-// Emit one init clock. Before the final leading LAT this is the original raw
-// clock path. Afterwards it shares the frame's OE gate and scan state so
-// register/spacer clocks participate in the selected row cadence.
-void spwm_emit_init_clock(GPIO *io, const HardwareMapping &h,
-                          gpio_bits_t spwm_out_bits,
-                          gpio_bits_t spwm_write_mask,
-                          SPWM_Init_Scan_Context *spwm_init_scan) {
-  if (spwm_init_scan == nullptr || !spwm_init_scan->started) {
-    if (spwm_write_mask != 0) {
-      io->WriteMaskedBits(spwm_out_bits, spwm_write_mask);
-    }
-    io->SetBits(h.clock);
-    io->ClearBits(h.clock);
-    return;
-  }
-
-  const bool spwm_scan_this_clock = spwm_init_scan->scan_active;
-  const bool spwm_leading_oe_this_clock =
-      spwm_init_scan->leading_oe_pending;
-  if (spwm_scan_this_clock) {
-    if (spwm_init_scan->blank_clock_row_transport) {
-      spwm_scan_pre_clock_shiftreg_upload(
-          io, h, spwm_init_scan->scan_rows, *spwm_init_scan->scan_config,
-          spwm_init_scan->oe_gate, spwm_init_scan->scan_state);
-    } else {
-      spwm_scan_pre_clock_direct_upload(
-          io, spwm_init_scan->row_setter, spwm_init_scan->scan_rows,
-          *spwm_init_scan->scan_config, spwm_init_scan->oe_gate,
-          spwm_init_scan->scan_state);
-    }
-  }
-
-  if (spwm_write_mask != 0) {
-    spwm_clock_pulse(io, h, spwm_out_bits, spwm_write_mask,
-                     spwm_init_scan->oe_gate);
-  } else {
-    spwm_clock_pulse_without_data_write(io, h, spwm_init_scan->oe_gate);
-  }
-
-  if (spwm_scan_this_clock) {
-    spwm_scan_post_clock(*spwm_init_scan->scan_config,
-                         spwm_init_scan->scan_state);
-  } else if (spwm_leading_oe_this_clock &&
-             !spwm_oe_gate_is_pending(spwm_init_scan->oe_gate)) {
-    spwm_init_scan->leading_oe_pending = false;
-    spwm_init_scan->scan_active = true;
-    spwm_init_scan->scan_state->phase = spwm_init_scan->resume_phase;
-    spwm_init_scan->oe_gate->section = SPWM_AUTO_TUNE_SECTION_UPLOAD;
-  }
-}
-
 }  // namespace
 
 // -----------------------------
@@ -3677,35 +3453,14 @@ void spwm_dump_to_matrix(GPIO *io, const HardwareMapping &h,
       spwm_make_runtime_scan_config(spwm_oe_style,
                                     spwm_get_oe_during_upload_clk_count(),
                                     true);
-  SPWM_Init_Scan_Context spwm_init_scan = {
-      false,
-      false,
-      false,
-      spwm_blank_clock_row_transport,
-      spwm_type2_shiftreg_transport,
-      spwm_row_setter,
-      spwm_rgb_mask,
-      spwm_effective_scan_rows,
-      spwm_init_oe_clks,
-      0,
-      &spwm_upload_scan_config,
-      &spwm_oe_gate,
-      &spwm_scan_state,
-  };
 
-  // Start the frame with the panel-specific init script. Every profile and row
-  // transport begins its leading OE/scan cadence immediately after the final
-  // leading LAT and carries that phase through the remaining init clocks.
+  // Start the frame with the panel-specific init script. FM6373-style panels
+  // use a simple direct-row init sequence, while FM6363 adds per-register LAT
+  // postambles.
   io->ClearBits(h.output_enable);
-  spwm_emit_init_sequence(io, h, &spwm_init_scan);
+  spwm_emit_init_sequence(io, h);
 
-  // Init spacers and subsequent steps normally consume the synchronized
-  // burst. Finish any remainder before framebuffer data begins.
-  while (spwm_init_scan.started && spwm_init_scan.leading_oe_pending) {
-    spwm_emit_init_clock(io, h, 0, spwm_rgb_mask, &spwm_init_scan);
-  }
-
-  // The conventional init path starts from logical row 0.
+  // Both paths start from logical row 0.
   //
   // Direct path:
   // SetRowAddress() actively drives the external row pins to row 0.
@@ -3713,20 +3468,18 @@ void spwm_dump_to_matrix(GPIO *io, const HardwareMapping &h,
   // Shift-register path:
   // SetRowAddress() only clears/reserves the row pins. The real row change is
   // emitted later by the blank-clock waveform during scan timing.
-  bool spwm_initial_oe_pending = false;
-  if (!spwm_init_scan.started) {
-    spwm_row_setter->SetRowAddress(io, spwm_scan_state.row);
+  spwm_row_setter->SetRowAddress(io, spwm_scan_state.row);
 
-    // Keep the conventional fallback for malformed or register-only init
-    // sequences that have no leading LAT boundary.
-    const bool spwm_share_initial_oe_with_upload =
-        spwm_oe_style_shares_initial_oe_with_upload(spwm_oe_style);
-    spwm_initial_oe_pending = spwm_start_initial_oe_phase(
-        io, h, spwm_rgb_mask, spwm_data_mask, spwm_init_oe_clks,
-        spwm_upload_scan_config, spwm_blank_clock_row_transport,
-        spwm_share_initial_oe_with_upload,
-        &spwm_oe_gate, &spwm_scan_state);
-  }
+  // The panel profile decides whether the startup OE burst is standalone or
+  // shared with the first upload clocks. Row-select transport stays
+  // overrideable independently through --led-spwm-row-addr-type.
+  const bool spwm_share_initial_oe_with_upload =
+      spwm_oe_style_shares_initial_oe_with_upload(spwm_oe_style);
+  bool spwm_initial_oe_pending = spwm_start_initial_oe_phase(
+      io, h, spwm_rgb_mask, spwm_data_mask, spwm_init_oe_clks,
+      spwm_upload_scan_config, spwm_blank_clock_row_transport,
+      spwm_share_initial_oe_with_upload,
+      &spwm_oe_gate, &spwm_scan_state);
 
   // Upload the RGB data for each logical row. Each logical row contains both
   // halves at once (R1/G1/B1 for the top half and R2/G2/B2 for the bottom

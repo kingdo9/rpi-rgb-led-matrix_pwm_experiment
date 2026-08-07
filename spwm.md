@@ -17,7 +17,7 @@ FM6373 / DP32019B - 128x64 \
 FM6363 / DP32020A - 128x64 \
 FM6353 | ICND2053 \
 SM16380SH - 128x64 \
-ICND1065L / 5958
+ICND1065L / 5958 - 172x86 - slight display issue in some use cases
 
 [How To Run SPWM Panels](#how-to-run-s-pwm-panels)
 
@@ -32,19 +32,13 @@ The parameters are by default tuned to Raspberry Pi 4, for other devices, exampl
 The main parameter to adjust for performance tweaking is adding the below to the beginning of your command. Try adjusting this, lower will give better performance, but higher might be required to give a better image.\
 **SPWM_END_OF_FRAME_EXTRA_ROW_CYCLES=1**
 
-Example ICND1065L, SPWM_END_OF_FRAME_EXTRA_ROW_CYCLES=12 and above can resolve some alignment issues if seen between top and bottom halves of the display.\
-If no issues seen, for better performance keep it at SPWM_END_OF_FRAME_EXTRA_ROW_CYCLES=0
-
----
-
-**Important - minimum GPIO slowdown** It might work on lower settings but the display registers can sometimes not be clocked in accurately. Test your own displays.
-NOTE: increasing it can sometimes improve framerates so try increasing it to ! Example sometimes I get faster performance at 4 over 3.
+**Important - minimum GPIO slowdown** It might work on lower settings but the display registers can not be clocked in accurately.
 
 **--led-slowdown-gpio=5** - Pi 4 \
 **--led-slowdown-gpio=3** - Pi 3 / Zero 2W \
 **--led-slowdown-gpio=0 or 1** - Pi 5
 
-NOTE **--led-show-refresh** may cause some glitches, so disable this once you have finished testing.
+NOTE **--led-show-refresh** may cause some glitches, so disable this once you have finished testing. Seen on SM16380SH
 
 
 
@@ -71,7 +65,8 @@ is the bus-independent broadcast alternative.
 
 These layouts require `--led-spwm-scan` to equal `--led-rows` and
 cannot be combined with `--led-multiplexing`. Split layouts 1/2 also require
-`--led-cols` to be divisible by 32. Value `0` uses the panel profile default.<br><br>
+`--led-cols` to be divisible by 32. Value `0` uses the panel profile default.
+For split layouts 1/2 on a chain.<br><br>
 
 **Don't worry about flicker as S-PWM devices have an internal refresh rate much higher, it is only the frame content changes when we refer to 60fps**
 
@@ -96,9 +91,6 @@ Pi 4 - FM6363 / DP32020A 128x64 Example
 Pi 4 - ICND1065L 172x86 43S Example
 
     taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D8 --led-rows=86 --led-cols=172 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=5 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=icnd1065l --led-spwm-row-addr-type=2 --led-spwm-scan=43 --led-spwm-register-config=0
-
-    SPWM_END_OF_FRAME_EXTRA_ROW_CYCLES=12 taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D8 --led-rows=86 --led-cols=172 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=5 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=icnd1065l --led-spwm-row-addr-type=2 --led-spwm-scan=43 --led-spwm-register-config=0
-
 
 This ICND1065L example uploads paired vertical rows because scan 43 is half of
 the 86-row panel height. Full-height data layouts 1..5 do not apply to it.
@@ -141,7 +133,12 @@ This test scrolls "Register Test" through the top, middle, and bottom of the
 display by default. It advances once per displayed refresh frame, so
 `--led-limit-refresh` controls the scroll rate; without that option it runs at
 the panel's available refresh rate.
-
+`--register-test-pattern=textscroll` scrolling text demo,\
+`--register-test-textspeed=N` to move
+N pixels per refresh frame instead of the default 1 pixel. Add
+`--register-test-text-position=middle` to keep every pass in the middle band;
+the default `cycle` setting moves through the top, middle, and bottom bands.
+Alternatively add\
 `--register-test-pattern=gradient` to hold the color gradient,\
 `--register-test-pattern=align` to hold the Demo 15 alignment scene, or\
 `--register-test-pattern=cycle` to alternate the gradient and alignment scenes
@@ -150,11 +147,6 @@ every few seconds.
 forth through eight center columns, advancing once per refresh frame. The
 pixels straddle the display's center-row boundary, so mixed animation frames
 appear diagonal.
-`--register-test-pattern=textscroll` scrolling text demo,\
-`--register-test-textspeed=N` to move
-N pixels per refresh frame instead of the default 1 pixel. Add
-`--register-test-text-position=middle` to keep every pass in the middle band;
-the default `cycle` setting moves through the top, middle, and bottom bands.
 
 Add `--register-test-scan=32` to visit only profiles tagged for 1/32 scan, or
 pass a comma-separated set such as\
@@ -162,7 +154,7 @@ pass a comma-separated set such as\
 
 This is a profile filter only; use `--led-spwm-scan` separately to set the panel's active scan row count.
 
-**LEFT / RIGHT** changes profile and `M` toggles a good-profile mark. Enter locks the
+**LEFT/RIGHT** changes profile and `M` toggles a good-profile mark. Enter locks the
 marked set, after which LEFT/RIGHT browses only those finalists. Stopping before
 or after Enter prints the confirmed active profile and copy-pasteable force-register CLI options.
 
@@ -223,11 +215,6 @@ Values are just examples from FM6373 --led-spwm-row-addr-type=0 where applicable
 
 #### SPWM_END_OF_FRAME_EXTRA_ROW_CYCLES=3
 Extra row cycles after the RGB upload at the end of every frame. \
-These are active row scans, so increasing `SPWM_FRAME_END_SLEEP_US` does not
-replace them.\
-If you notice any alignment issues between top and bottom halves of the display, try increase this value in 10s. These explicit environment values 
-override the panel default.
-
 <img alt="Image" src="./img/spwm/spwm_end_of_frame_extra_row_cycles.png" />
 
 
@@ -237,7 +224,7 @@ Gap in US between frames. \
 <img alt="Image" src="./img/spwm/spwm_frame_end_sleep_us.png" />
 
 #### SPWM_FIRST_OE_CLK_LENGTH=12
-Length of the leading OE burst. \
+For --led-spwm-row-addr-type=0 \
 <img alt="Image" src="./img/spwm/spwm_first_oe_clk_length.png" />
 
 #### SPWM_OE_CLK_LENGTH=4
@@ -249,8 +236,7 @@ Offset of CLKs when first row selection Channel A is pulsed in relation to OE pu
 <img alt="Image" src="./img/spwm/spwm_oe_clk_look_behind.png" />
 
 #### SPWM_RGB_UPLOAD_LAT_SPACER_CLK_COUNT=0
-Adds LAT-low, RGB-blank spacer CLKs after each normal RGB upload LAT pulse. The
-ICND1065L profile defaults to 9.
+Adds LAT-low, RGB-blank spacer CLKs after each normal RGB upload LAT pulse.
 
 #### SPWM_OE_DURING_UPLOAD_CLK_COUNT=112
 Change how many CLKS an OE pulse occurs on during the RGB upload. Auto Tune will use this as the base and adjust SPWM_OE_AFTER_UPLOAD_CLK_COUNT \
