@@ -2,7 +2,7 @@ rpi-rgb-led-matrix - SPWM Expeimental Support
 ==================================================
 
 These newer panel types currently have limited and experimental support.
-SPWM panels below currently supported by this fork:
+Hardware-tested SPWM panels currently supported by this fork:
 
 For test examples on how to run and how to obtain your optimum register values\
 Visit - [SPWM Tuning Guide](./spwm.md)
@@ -39,6 +39,13 @@ Visit - [SPWM Tuning Guide](./spwm.md)
     `--led-panel-type=icnd1065l --led-rows=86 --led-cols=172 --led-spwm-row-addr-type=2 --led-spwm-scan=43 --led-spwm-register-config=0`
   - 128x64, 32S\
     `--led-panel-type=icnd1065l --led-rows=64 --led-cols=128 --led-spwm-row-addr-type=2 --led-spwm-scan=32 --led-spwm-register-config=2`
+  <br><br>
+
+### Registered experimental profile awaiting physical-panel verification
+
+- ICND2153, 64x32, 1/8-scan direct row selection (candidate command):\
+  `--led-panel-type=icnd2153 --led-rows=32 --led-cols=64 --led-multiplexing=2 --led-spwm-row-addr-type=0 --led-spwm-data-layout=0 --led-spwm-register-config=0`
+
   <br><br>
 
 ### Shared SPWM flags:
@@ -426,7 +433,7 @@ two chained panels, so then you'd use
 --led-spwm-data-layout=<0..5>: SPWM data layout. 0 = panel default; 1/2 = full-height split across swapped RGB lanes; 3 = full-width serial on RGB1+RGB2; 4/5 = full-width serial on RGB1/RGB2 only. Cannot be combined with --led-multiplexing (Default: 0).
 --led-spwm-register-config=<0|1..N>: SPWM register profile. 0 = main; N = runtime catalog regtypeN (Default: 0).
 --led-spwm-force-register1=<words|RGB> ... --led-spwm-force-register6=<words|RGB>: Override individual 1-based panel-profile register slots. Fixed slots accept one shared word or R:<word>;G:<word>;B:<word>. Rotating RGB slots accept a shared wrapping sequence or quoted equal-length R:<words>;G:<words>;B:<words> lists. One labelled value is copied to all channels. Omitted slots keep their panel defaults; selecting a slot that the panel does not provide is an error.
---led-spwm-force-register=<words|RGB>: Backward-compatible shortcut for the profile's rotating RGB slot, currently register 3 where present. It accepts the same shared or RGB-labelled syntax. Numbered overrides take precedence (Default: unset).
+--led-spwm-force-register=<words|RGB>: Backward-compatible shortcut for the profile-selected rotating RGB slot. It accepts the same shared or RGB-labelled syntax. Numbered overrides take precedence (Default: unset).
 ```
 
 For SPWM panels, `--led-panel-type` selects the panel profile, `--led-spwm-row-addr-type` selects the SPWM row-address path, `--led-spwm-scan` is only needed when the shift-register path needs a non-default scan count, `--led-spwm-data-layout` selects full-height data routing, and `--led-spwm-register-config=N` selects runtime catalog `regtypeN` (`0` keeps the main config). Forced values are layered on that selected config: the unnumbered rotating-RGB shortcut is applied first, then numbered slot overrides are applied and win for the same slot. Slots without a force option retain the selected config.

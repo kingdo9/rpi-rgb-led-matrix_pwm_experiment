@@ -408,7 +408,7 @@ void PrintMatrixFlags(FILE *out, const RGBMatrix::Options &d,
           "(Default: %d).\n"
           "\t--led-spwm-register-config=<0|1..N>: SPWM register profile. 0 = main; N = runtime catalog regtypeN "
           "(Default: built-in main).\n"
-          "\t--led-spwm-force-register=<words|RGB>: Backward-compatible shortcut for the profile's rotating RGB register slot (currently register 3). A plain list is shared; use quoted R:<words>;G:<words>;B:<words> for distinct channels.\n"
+          "\t--led-spwm-force-register=<words|RGB>: Backward-compatible shortcut for the profile-selected rotating RGB register slot. A plain list is shared; use quoted R:<words>;G:<words>;B:<words> for distinct channels.\n"
           "\t--led-spwm-force-register<N>=<words|RGB>: Override 1-based SPWM profile register slot N, where N is 1..6. Fixed slots accept one shared word or R:<word>;G:<word>;B:<word>; rotating RGB slots accept shared or RGB-labelled lists. Whitespace is allowed.\n\n"
           "\t--led-%sshow-refresh        : %show refresh rate.\n"
           "\t--led-limit-refresh=<Hz>  : Limit refresh rate to this frequency in Hz. Useful to keep a\n"
@@ -422,7 +422,7 @@ void PrintMatrixFlags(FILE *out, const RGBMatrix::Options &d,
           "\t--led-pwm-dither-bits=<0..2> : Time dithering of lower bits "
           "(Default: 0)\n"
           "\t--led-%shardware-pulse   : %sse hardware pin-pulse generation.\n"
-          "\t--led-panel-type=<name>   : Needed to initialize special panels. Supported: 'FM6126A', 'FM6127', 'FM6373', 'ICND1065L', 'SM16380SH', 'FM6363', 'FM6353'\n"
+          "\t--led-panel-type=<name>   : Needed to initialize special panels. Recognized: 'FM6126A', 'FM6127', 'FM6373', 'ICND1065L', 'ICND2153', 'SM16380SH', 'FM6363', 'FM6353'\n"
           "\t--led-%sbusy-waiting     : %sse busy waiting when limiting refresh rate.\n",
           d.hardware_mapping,
           d.rows, d.cols, d.chain_length, d.parallel,

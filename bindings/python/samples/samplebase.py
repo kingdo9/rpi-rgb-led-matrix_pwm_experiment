@@ -42,7 +42,7 @@ class SampleBase(object):
         self.parser.add_argument("--led-spwm-force-register5", action="store", help="Override SPWM profile register slot 5; fixed slots accept one shared word or distinct R/G/B words, rotating slots accept shared or RGB-labelled lists", default=None, type=str)
         self.parser.add_argument("--led-spwm-force-register6", action="store", help="Override SPWM profile register slot 6; fixed slots accept one shared word or distinct R/G/B words, rotating slots accept shared or RGB-labelled lists", default=None, type=str)
         self.parser.add_argument("--led-multiplexing", action="store", help="Multiplexing type: 0=direct; 1=strip; 2=checker; 3=spiral; 4=ZStripe; 5=ZnMirrorZStripe; 6=coreman; 7=Kaler2Scan; 8=ZStripeUneven... (Default: 0)", default=0, type=int)
-        self.parser.add_argument("--led-panel-type", action="store", help="Needed to initialize special panels. Supported: 'FM6126A', 'FM6127', 'FM6373', 'ICND1065L', 'SM16380SH', 'FM6363', 'FM6353'", default="", type=str)
+        self.parser.add_argument("--led-panel-type", action="store", help="Needed to initialize special panels. Recognized: 'FM6126A', 'FM6127', 'FM6373', 'ICND1065L', 'ICND2153', 'SM16380SH', 'FM6363', 'FM6353'", default="", type=str)
         self.parser.add_argument("--led-no-drop-privs", dest="drop_privileges", help="Don't drop privileges from 'root' after initializing the hardware.", action='store_false')
         self.parser.set_defaults(drop_privileges=True)
 

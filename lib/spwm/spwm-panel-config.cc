@@ -24,11 +24,14 @@ bool spwm_panel_type_matches(const char *spwm_panel_type,
 }
 
 // Wrap a compile-time init-step array in the lightweight runtime view used by
-// the SPWM upload code.
+// the SPWM upload code. Existing profiles retain the legacy trailing clock
+// unless their captured protocol explicitly suppresses it.
 template <size_t N>
 SPWM_Init_Sequence spwm_make_init_sequence(
-    const SPWM_Init_Step (&spwm_steps)[N]) {
-  SPWM_Init_Sequence spwm_init_sequence = {spwm_steps, N};
+    const SPWM_Init_Step (&spwm_steps)[N],
+    bool spwm_suppress_lat_pulse_trailing_clock = false) {
+  SPWM_Init_Sequence spwm_init_sequence = {
+      spwm_steps, N, spwm_suppress_lat_pulse_trailing_clock};
   return spwm_init_sequence;
 }
 
@@ -305,6 +308,62 @@ static const SPWM_Init_Step SPWM_FM6353_INIT_STEPS[] = {
 static const SPWM_Init_Sequence SPWM_FM6353_INIT_SEQUENCE =
     spwm_make_init_sequence(SPWM_FM6353_INIT_STEPS);
 
+// -------------------------------------------------------------------------------------------------
+// ICND2153 profile definition.
+// Preserve the supplied v0.14 implementation's distinct half-rate GCLK
+// waveform. The accompanying RCFGX independently identifies a 64x32,
+// 1/8-scan panel and 138 GCLK pulses per scan.
+// -------------------------------------------------------------------------------------------------
+
+static const SPWM_Panel_Settings SPWM_ICND2153_SETTINGS = []() {
+  SPWM_Panel_Settings spwm_settings = spwm_make_default_panel_settings();
+  spwm_settings.default_rows = 32;
+  spwm_settings.default_columns = 64;
+  spwm_settings.default_data_layout = SPWM_DATA_LAYOUT_PROFILE_DEFAULT;
+  spwm_settings.auto_tune_oe_gaps = false;
+  spwm_settings.auto_tune_frames = 0;
+  spwm_settings.auto_tune_max_step_clks = 0;
+  // One half-rate pulse occupies two clock slots, so 138 GCLK pulses require
+  // 276 slots. Keeping every burst on that boundary preserves the legacy
+  // implementation's ICND2153 row-counter cadence.
+  spwm_settings.first_oe_clk_length = 276;
+  spwm_settings.end_of_frame_extra_row_cycles = 1;
+  spwm_settings.frame_end_sleep_us = 100;
+  spwm_settings.oe_during_upload_clk_count = 276;
+  spwm_settings.oe_after_upload_clk_count = 276;
+  spwm_settings.oe_clk_look_behind = 0;
+  spwm_settings.oe_clk_length = 276;
+  spwm_settings.oe_style = SPWM_OE_STYLE_HALF_RATE;
+  return spwm_settings;
+}();
+
+// The supplied captures emit PRE_ACT, enable, vsync, and all five register
+// writes every frame. The receiver starts GCLK after LAT3 and before the next
+// LAT14, while the rollback-preserved shared path completes this entire init
+// before starting GCLK. That boundary remains unverified. The receiver has one
+// explicit LAT-low clock after LAT12 and no implicit trailing clock after the
+// other standalone LAT bursts.
+static const SPWM_Init_Step SPWM_ICND2153_INIT_STEPS[] = {
+    {SPWM_INIT_STEP_LAT_PULSES,   14, 0, 0},  // pre-active
+    {SPWM_INIT_STEP_LAT_PULSES,   12, 0, 1},  // enable output
+    {SPWM_INIT_STEP_LAT_PULSES,    3, 0, 0},  // vsync
+    {SPWM_INIT_STEP_LAT_PULSES,   14, 0, 0},
+    {SPWM_INIT_STEP_REGISTER,      1, 0, 0},
+    {SPWM_INIT_STEP_LAT_PULSES,   14, 0, 0},
+    {SPWM_INIT_STEP_RGB_REGISTER,  2, 0, 0},
+    {SPWM_INIT_STEP_LAT_PULSES,   14, 0, 0},
+    {SPWM_INIT_STEP_REGISTER,      3, 0, 0},
+    {SPWM_INIT_STEP_LAT_PULSES,   14, 0, 0},
+    {SPWM_INIT_STEP_REGISTER,      4, 0, 0},
+    {SPWM_INIT_STEP_LAT_PULSES,   14, 0, 0},
+    {SPWM_INIT_STEP_REGISTER,      5, 0, 0},
+};
+
+static const SPWM_Init_Sequence SPWM_ICND2153_INIT_SEQUENCE =
+    spwm_make_init_sequence(
+        SPWM_ICND2153_INIT_STEPS,
+        /*spwm_suppress_lat_pulse_trailing_clock=*/true);
+
 // This table describes panel-tied behavior only: init sequence, register
 // factory, default OE timing, and panel geometry defaults. Register payloads
 // live in spwm-panel-registers.cc. The runtime row transport still comes from
@@ -330,6 +389,10 @@ static const SPWM_Panel_Profile SPWM_PANEL_PROFILES[] = {
      SPWM_FM6353_SETTINGS,
      spwm_create_fm6353_config,
      SPWM_FM6353_INIT_SEQUENCE},
+    {"icnd2153",
+     SPWM_ICND2153_SETTINGS,
+     spwm_create_icnd2153_config,
+     SPWM_ICND2153_INIT_SEQUENCE},
 };
 
 }  // namespace

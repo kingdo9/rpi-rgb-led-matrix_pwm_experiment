@@ -19,8 +19,8 @@ enum SPWM_Init_Step_Type {
   SPWM_INIT_STEP_RGB_REGISTER,
 };
 
-// One startup action: either a LAT pulse burst, a fixed register upload, or the
-// per-frame RGB register block.
+// One startup action: either a LAT pulse burst, a fixed register upload, or a
+// profile-selected RGB register block.
 struct SPWM_Init_Step {
   SPWM_Init_Step_Type type;
   uint8_t value;  // LAT pulse count or register index.
@@ -31,7 +31,10 @@ struct SPWM_Init_Step {
 // Ordered list of init steps emitted before regular RGB data upload begins.
 struct SPWM_Init_Sequence {
   const SPWM_Init_Step *steps;  // Backing storage for the init steps.
-  size_t step_count;          // Number of entries in `steps`.
+  size_t step_count;            // Number of entries in `steps`.
+  // Keep the legacy trailing CLK for existing profiles, but allow a captured
+  // protocol to rely solely on each step's explicit LAT-low spacer clocks.
+  bool suppress_lat_pulse_trailing_clock;
 };
 
 // Complete description of an SPWM-capable panel type, including geometry, init

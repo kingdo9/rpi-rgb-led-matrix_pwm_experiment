@@ -531,6 +531,8 @@ struct SPWM_OE_Gate_State {
   SPWM_Auto_Tune_Section section;
   bool pulse_each_clock;
   bool capture_start_time;
+  // Alternate OE high/low by remaining-slot parity for half-rate GCLK.
+  bool half_rate_pulse;
 };
 
 // Scan timing fixes the shift-register row-select pulse positions for the
@@ -1260,10 +1262,12 @@ void spwm_send_register_extra_lat_clocks(
 }
 
 // Emit a LAT-high clock burst used by panel-specific init sequences, followed
-// by any requested LAT-low spacer clocks before leaving the row lines idle.
+// by any requested LAT-low spacer clocks. Existing profiles also emit their
+// legacy trailing clock; capture-backed sequences can explicitly suppress it.
 void spwm_send_lat_pulses(GPIO *io, const HardwareMapping &h,
                           uint8_t spwm_row, int spwm_pulses,
-                          int spwm_space_clocks) {
+                          int spwm_space_clocks,
+                          bool spwm_suppress_trailing_clock) {
   const SPWM_Register_Output_Masks spwm_masks =
       spwm_get_register_output_masks(h);
 
@@ -1286,7 +1290,9 @@ void spwm_send_lat_pulses(GPIO *io, const HardwareMapping &h,
     io->SetBits(h.clock);
     io->ClearBits(h.clock);
   }
-  io->SetBits(h.clock);
+  if (!spwm_suppress_trailing_clock) {
+    io->SetBits(h.clock);
+  }
   spwm_set_row_bits(io, h, spwm_row);
 }
 
@@ -1354,10 +1360,9 @@ void spwm_send_register(GPIO *io, const HardwareMapping &h,
                            spwm_space_clocks);
 }
 
-// Shift the rotating RGB register block used once per frame by FM6373-style
-// panels, then emit any extra LAT postamble clocks for that slot.
-// Purpose: Shift the active panel's rotating RGB control register for the
-// current frame.
+// Shift a profile-selected RGB register block whenever the active init
+// sequence visits that slot, then emit any extra LAT postamble clocks.
+// Purpose: Shift the active panel's RGB control register.
 // Inputs: GPIO interface, hardware mapping, 1-based register index, row bits.
 // Outputs: None.
 // Side effects: Advances the RGB register sequence and drives GPIO lines.
@@ -1422,6 +1427,8 @@ void spwm_emit_init_sequence(GPIO *io, const HardwareMapping &h) {
   // slots this init sequence will actually emit.
   spwm_apply_pending_rgb_register_profile();
   spwm_apply_pending_fixed_register_profile();
+  const bool spwm_suppress_lat_pulse_trailing_clock =
+      spwm_runtime_state.init_sequence.suppress_lat_pulse_trailing_clock;
 
   for (size_t spwm_step_index = 0;
        spwm_step_index < spwm_runtime_state.init_sequence.step_count;
@@ -1431,7 +1438,8 @@ void spwm_emit_init_sequence(GPIO *io, const HardwareMapping &h) {
     switch (spwm_step.type) {
       case SPWM_INIT_STEP_LAT_PULSES:
         spwm_send_lat_pulses(io, h, spwm_step.row, spwm_step.value,
-                             spwm_step.space_clocks);
+                             spwm_step.space_clocks,
+                             spwm_suppress_lat_pulse_trailing_clock);
         break;
       case SPWM_INIT_STEP_REGISTER:
         spwm_send_register(io, h, spwm_step.value, spwm_step.row,
@@ -1593,7 +1601,15 @@ void spwm_clock_pulse(GPIO *io, const HardwareMapping &h,
   }
 
   if (spwm_gate != nullptr && spwm_gate->active && spwm_gate->remaining > 0) {
-    io->SetBits(h.output_enable);
+    if (spwm_gate->half_rate_pulse) {
+      if ((spwm_gate->remaining & 1) == 0) {
+        io->SetBits(h.output_enable);
+      } else {
+        io->ClearBits(h.output_enable);
+      }
+    } else {
+      io->SetBits(h.output_enable);
+    }
   }
 
   io->SetBits(h.clock);
@@ -2828,8 +2844,9 @@ gpio_bits_t spwm_get_framebuffer_rgb_mask(const HardwareMapping &h) {
 }
 
 // FM6373-style OE advances the row shortly before the next burst, while
-// FM6363-style OE uses the whole non-OE window as setup time. This stays tied
-// to the panel profile even when row transport is overridden.
+// FM6363-style OE uses the whole non-OE window as setup time. Half-rate OE
+// retains the FM6373 row schedule but alternates its level by clock slot. This
+// stays tied to the panel profile even when row transport is overridden.
 SPWM_OE_Style spwm_get_active_oe_style() {
   const SPWM_Panel_Settings &spwm_settings = spwm_get_panel_settings();
   return spwm_settings.oe_style;
@@ -2839,6 +2856,7 @@ bool spwm_oe_style_uses_row_before_oe(SPWM_OE_Style spwm_oe_style) {
   switch (spwm_oe_style) {
     case SPWM_OE_STYLE_FM6363:
       return true;
+    case SPWM_OE_STYLE_HALF_RATE:
     case SPWM_OE_STYLE_FM6373:
     default:
       return false;
@@ -2850,6 +2868,7 @@ bool spwm_oe_style_shares_initial_oe_with_upload(
   switch (spwm_oe_style) {
     case SPWM_OE_STYLE_FM6363:
       return true;
+    case SPWM_OE_STYLE_HALF_RATE:
     case SPWM_OE_STYLE_FM6373:
     default:
       return false;
@@ -2860,6 +2879,7 @@ bool spwm_oe_style_pulse_each_clock(SPWM_OE_Style spwm_oe_style) {
   switch (spwm_oe_style) {
     case SPWM_OE_STYLE_FM6363:
       return true;
+    case SPWM_OE_STYLE_HALF_RATE:  // parity toggle, not per-clock pulse
     case SPWM_OE_STYLE_FM6373:
     default:
       return false;
@@ -3446,7 +3466,9 @@ void spwm_dump_to_matrix(GPIO *io, const HardwareMapping &h,
   SPWM_OE_Gate_State spwm_oe_gate = {0, false, &spwm_auto_tune_state,
                                      SPWM_AUTO_TUNE_SECTION_NONE,
                                      spwm_pulse_oe_each_clock,
-                                     false};
+                                     false,
+                                     spwm_oe_style ==
+                                         SPWM_OE_STYLE_HALF_RATE};
   SPWM_Scan_State spwm_scan_state = {0, 0, false, false, 0, false};
   const int spwm_init_oe_clks = spwm_get_first_oe_clk_length();
   const SPWM_Scan_Config spwm_upload_scan_config =

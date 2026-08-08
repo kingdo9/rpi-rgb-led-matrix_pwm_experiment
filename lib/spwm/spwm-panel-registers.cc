@@ -491,6 +491,51 @@ static const SPWM_Register_Config_Entry
     spwm_make_fixed_register_config_entry(5, 0x0040),
 };
 
+// -------------------------------------------------------------------------------------------------
+// ICND2153 register definition.
+// -------------------------------------------------------------------------------------------------
+
+// These tail-latch widths and the payload below are preserved unchanged from
+// the supplied v0.14 implementation. The accompanying Nova capture
+// confirms the five-slot grammar and {4, 6, 8, 10, 2} timing, but contains a
+// separately tuned slot-2/slot-3 payload that is not mixed into this main
+// configuration.
+static const uint8_t SPWM_ICND2153_REGISTER_SEND_LAT[][1] = {
+    {4},
+    {6},
+    {8},
+    {10},
+    {2},
+};
+static const SPWM_Register_Timing SPWM_ICND2153_REGISTER_TIMINGS[] = {
+    spwm_make_register_timing(SPWM_ICND2153_REGISTER_SEND_LAT[0]),
+    spwm_make_register_timing(SPWM_ICND2153_REGISTER_SEND_LAT[1]),
+    spwm_make_register_timing(SPWM_ICND2153_REGISTER_SEND_LAT[2]),
+    spwm_make_register_timing(SPWM_ICND2153_REGISTER_SEND_LAT[3]),
+    spwm_make_register_timing(SPWM_ICND2153_REGISTER_SEND_LAT[4]),
+};
+
+// Slot 2 carries the v0.14 implementation's per-color current/white-balance
+// words; the other four slots broadcast one fixed word to every RGB lane.
+static const uint16_t SPWM_ICND2153_REGISTER2_R[] = {0x7dfe};
+static const uint16_t SPWM_ICND2153_REGISTER2_G[] = {0x71fe};
+static const uint16_t SPWM_ICND2153_REGISTER2_B[] = {0x5dfe};
+static const SPWM_RGB_Word_Sequences SPWM_ICND2153_REGISTER2_SEQUENCES = {
+    spwm_make_word_sequence(SPWM_ICND2153_REGISTER2_R),
+    spwm_make_word_sequence(SPWM_ICND2153_REGISTER2_G),
+    spwm_make_word_sequence(SPWM_ICND2153_REGISTER2_B),
+};
+
+static const SPWM_Register_Config_Entry
+    SPWM_ICND2153_REGISTER_ENTRIES[] = {
+    spwm_make_fixed_register_config_entry(1, 0x0770),
+    spwm_make_rgb_register_config_entry(
+        2, SPWM_ICND2153_REGISTER2_SEQUENCES),
+    spwm_make_fixed_register_config_entry(3, 0x4207),
+    spwm_make_fixed_register_config_entry(4, 0x0040),
+    spwm_make_fixed_register_config_entry(5, 0x0008),
+};
+
 const SPWM_Loaded_Register_Profile *spwm_get_selected_runtime_profile(
     const char *spwm_panel_type, int spwm_register_config) {
   if (spwm_register_config <= 0) return nullptr;
@@ -627,6 +672,16 @@ SPWM_Config spwm_create_fm6353_config(
     spwm_apply_fixed_register_profile(&spwm_config, *spwm_profile);
   }
   return spwm_config;
+}
+
+// Build the single built-in ICND2153 main configuration; no runtime catalog
+// variants are registered for this controller.
+SPWM_Config spwm_create_icnd2153_config(
+    const SPWM_Panel_Settings &spwm_settings, int spwm_columns,
+    int /*spwm_row_address_type*/, int /*spwm_register_config*/) {
+  return spwm_create_register_config(
+      spwm_settings, spwm_columns, SPWM_ICND2153_REGISTER_TIMINGS,
+      spwm_make_register_config_entries(SPWM_ICND2153_REGISTER_ENTRIES));
 }
 
 }  // namespace internal

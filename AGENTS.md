@@ -7,8 +7,8 @@ adds experimental support for newer SPWM-style LED panel controllers and for
 Raspberry Pi 5 GPIO through RP1.
 
 The currently registered SPWM controller profiles are FM6353, FM6363, FM6373,
-ICND1065L, and SM16380SH. The SPWM implementation is profile-based so new
-controllers can reuse the shared upload, row-address, initialization, and
+ICND1065L, ICND2153, and SM16380SH. The SPWM implementation is profile-based so
+new controllers can reuse the shared upload, row-address, initialization, and
 register-configuration machinery.
 
 Raspberry Pi 5 support has an important boundary:

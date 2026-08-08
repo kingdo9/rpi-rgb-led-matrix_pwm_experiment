@@ -19,6 +19,9 @@ FM6353 | ICND2053 \
 SM16380SH - 128x64 \
 ICND1065L / 5958 - 172x86 - slight display issue in some use cases
 
+Registered experimental profile awaiting physical-panel verification: \
+ICND2153 - 64x32, 1/8-scan
+
 [How To Run SPWM Panels](#how-to-run-s-pwm-panels)
 
 [Find Your Optimum Register Config](#find-your-optimum-register-config)
@@ -99,6 +102,11 @@ Pi 4 - ICND1065L 128x64 32S Example
 
     taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D8 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=5 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=icnd1065l --led-spwm-row-addr-type=2 --led-spwm-scan=32 --led-spwm-register-config=2
 
+Pi 4 - ICND2153 64x32 1/8-scan - candidate configuration, hardware verification pending
+
+    taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D8 --led-rows=32 --led-cols=64 --led-panel-type=icnd2153 --led-multiplexing=2 --led-spwm-row-addr-type=0 --led-spwm-data-layout=0 --led-spwm-register-config=0
+
+
 Pi 4 - SM16380SH 128x64 Example
 
     taskset -c 2 chrt -f 99 /opt/rpi-rgb-led-matrix*/examples-api-use/demo -D8 --led-rows=64 --led-cols=128 --led-scan-mode=0 --led-gpio-mapping=regular --led-brightness=50 --led-slowdown-gpio=3 --led-pwm-bits=11 --led-limit-refresh=60 --led-no-busy-waiting --led-panel-type=sm16380sh --led-spwm-row-addr-type=0
@@ -166,10 +174,11 @@ Alternatively you can add register values manually. Further details on how will 
 Rotating RGB Register Profiles
 
 Unnumbered option selects the panel profile's rotating RGB register; the
-numbered form explicitly selects slot 3.
+numbered equivalent is profile-specific. ICND2153 uses slot 2; the current
+FM6373, ICND1065L, and SM16380SH profiles use slot 3.
 
 `--led-spwm-force-register="R:<red words>;G:<green words>;B:<blue words>"`\
-`--led-spwm-force-register3="R:<red words>;G:<green words>;B:<blue words>"`
+`--led-spwm-force-register<N>="R:<red words>;G:<green words>;B:<blue words>"`
 
 Fixed Profiles
 

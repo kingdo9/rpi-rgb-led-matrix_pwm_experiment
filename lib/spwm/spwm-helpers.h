@@ -31,6 +31,9 @@ struct SPWM_Upload_Geometry {
 enum SPWM_OE_Style {
   SPWM_OE_STYLE_FM6373 = 0,
   SPWM_OE_STYLE_FM6363 = 1,
+  // Alternate OE high/low on successive shift-clock slots, producing one
+  // 50%-duty GCLK pulse for every two slots. Timing counts use slots.
+  SPWM_OE_STYLE_HALF_RATE = 2,
 };
 
 // SPWM-only row-address transport selected by --led-spwm-row-addr-type.
@@ -214,7 +217,7 @@ class SPWM_Config {
   void spwm_add_register(size_t spwm_register_index,
                          const std::vector<uint16_t> &spwm_words,
                          const SPWM_Register_Timing *spwm_timing = nullptr);
-  // Store the rotating RGB register block used by FM6373-style panels.
+  // Store a profile-selected register block with distinct R/G/B sequences.
   void spwm_add_rgb_register(
       size_t spwm_register_index,
       const std::array<std::vector<uint16_t>, 3> &spwm_channel_sequences,

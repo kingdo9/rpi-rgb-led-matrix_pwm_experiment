@@ -39,7 +39,7 @@ Options:
         --led-spwm-data-layout=<0..5>: SPWM data layout. 0 = panel default; 1/2 = full-height split across swapped RGB lanes; 3 = full-width serial on RGB1+RGB2; 4/5 = full-width serial on RGB1/RGB2 only. Cannot be combined with --led-multiplexing (Default: 0).
         --led-spwm-register-config=<0|1..N>: SPWM register profile. 0 = main; N = runtime catalog regtypeN (Default: built-in main).
         --led-spwm-force-register1=<words|RGB> ... --led-spwm-force-register6=<words|RGB>: Override individual 1-based panel-profile register slots. Fixed slots accept one shared word or R:<word>;G:<word>;B:<word>. Rotating RGB slots accept a shared list or quoted equal-length R:<words>;G:<words>;B:<words> lists. One labelled value is copied to all channels. Omitted slots keep their panel defaults; selecting an absent slot is an error.
-        --led-spwm-force-register=<words|RGB>: Backward-compatible shortcut for the profile's rotating RGB slot, currently register 3 where present. It accepts the same shared or RGB-labelled syntax. Numbered overrides take precedence (Default: unset).
+        --led-spwm-force-register=<words|RGB>: Backward-compatible shortcut for the profile-selected rotating RGB slot. It accepts the same shared or RGB-labelled syntax. Numbered overrides take precedence (Default: unset).
         --led-show-refresh        : Show refresh rate.
         --led-limit-refresh=<Hz>  : Limit refresh rate to this frequency in Hz. Useful to keep a
                                     constant refresh rate on loaded system. 0=no limit. Default: 0
@@ -48,7 +48,7 @@ Options:
         --led-pwm-lsb-nanoseconds : PWM Nanoseconds for LSB (Default: 130)
         --led-pwm-dither-bits=<0..2> : Time dithering of lower bits (Default: 0)
         --led-no-hardware-pulse   : Don't use hardware pin-pulse generation.
-        --led-panel-type=<name>   : Needed to initialize special panels. Supported: 'FM6126A', 'FM6127', 'FM6373', 'ICND1065L', 'SM16380SH', 'FM6363', 'FM6353'
+        --led-panel-type=<name>   : Needed to initialize special panels. Recognized: 'FM6126A', 'FM6127', 'FM6373', 'ICND1065L', 'ICND2153', 'SM16380SH', 'FM6363', 'FM6353'
         --led-slowdown-gpio=<0..30>: Slowdown GPIO. Needed for faster Pis/slower panels (Default: 1).
         --led-rp1-pio=<0|1>       : On Raspberry Pi 5-family boards, force the RP1 PIO backend.
                                     0=default RP1 RIO, 1=PIO (Default: 0).
