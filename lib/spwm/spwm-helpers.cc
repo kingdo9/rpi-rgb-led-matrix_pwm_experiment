@@ -693,6 +693,11 @@ struct SPWM_Runtime_State {
         data_layout(SPWM_DATA_LAYOUT_PROFILE_DEFAULT),
         multiplexing(0),
         enabled(false),
+        static_init_completed(false),
+        cached_column_routes_key_columns(-1),
+        cached_column_routes_key_slots(-1),
+        cached_column_routes_key_layout(-1),
+        cached_column_routes_key_panel_columns(-1),
         init_sequence(spwm_get_initial_init_sequence()),
         last_initial_oe_start_ns(0),
         target_initial_oe_start_ns(0),
@@ -706,6 +711,12 @@ struct SPWM_Runtime_State {
   int data_layout;
   int multiplexing;
   bool enabled;
+  bool static_init_completed;
+  std::vector<SPWM_Column_Route> cached_column_routes;
+  int cached_column_routes_key_columns;
+  int cached_column_routes_key_slots;
+  int cached_column_routes_key_layout;
+  int cached_column_routes_key_panel_columns;
   SPWM_Init_Sequence init_sequence;
   uint64_t last_initial_oe_start_ns;
   uint64_t target_initial_oe_start_ns;
@@ -834,6 +845,7 @@ void spwm_apply_pending_fixed_register_profile() {
 
   spwm_fixed_register_profile_being_emitted = spwm_profile;
   spwm_fixed_register_profile_remaining_mask = spwm_register_mask;
+  spwm_runtime_state.static_init_completed = false;
 }
 
 // Option 0 follows the selected panel profile. Profiles that do not opt into a
@@ -1423,6 +1435,9 @@ void spwm_emit_init_sequence(GPIO *io, const HardwareMapping &h) {
   spwm_apply_pending_rgb_register_profile();
   spwm_apply_pending_fixed_register_profile();
 
+  const bool run_static_init = !spwm_runtime_state.static_init_completed ||
+                               (spwm_fixed_register_profile_being_emitted != nullptr);
+
   for (size_t spwm_step_index = 0;
        spwm_step_index < spwm_runtime_state.init_sequence.step_count;
        ++spwm_step_index) {
@@ -1430,17 +1445,21 @@ void spwm_emit_init_sequence(GPIO *io, const HardwareMapping &h) {
         spwm_runtime_state.init_sequence.steps[spwm_step_index];
     switch (spwm_step.type) {
       case SPWM_INIT_STEP_LAT_PULSES:
-        spwm_send_lat_pulses(io, h, spwm_step.row, spwm_step.value,
-                             spwm_step.space_clocks);
+        if (run_static_init) {
+          spwm_send_lat_pulses(io, h, spwm_step.row, spwm_step.value,
+                               spwm_step.space_clocks);
+        }
         break;
       case SPWM_INIT_STEP_REGISTER:
-        spwm_send_register(io, h, spwm_step.value, spwm_step.row,
-                           spwm_step.space_clocks);
-        if (spwm_fixed_register_profile_being_emitted != nullptr &&
-            spwm_step.value > 0 &&
-            spwm_step.value <= SPWM_FORCE_REGISTER_COUNT) {
-          spwm_fixed_register_profile_remaining_mask &=
-              ~static_cast<uint32_t>(1u << (spwm_step.value - 1));
+        if (run_static_init) {
+          spwm_send_register(io, h, spwm_step.value, spwm_step.row,
+                             spwm_step.space_clocks);
+          if (spwm_fixed_register_profile_being_emitted != nullptr &&
+              spwm_step.value > 0 &&
+              spwm_step.value <= SPWM_FORCE_REGISTER_COUNT) {
+            spwm_fixed_register_profile_remaining_mask &=
+                ~static_cast<uint32_t>(1u << (spwm_step.value - 1));
+          }
         }
         break;
       case SPWM_INIT_STEP_RGB_REGISTER:
@@ -1457,6 +1476,8 @@ void spwm_emit_init_sequence(GPIO *io, const HardwareMapping &h) {
         break;
     }
   }
+
+  spwm_runtime_state.static_init_completed = true;
 
   if (spwm_rgb_register_profile_being_emitted != nullptr &&
       spwm_rgb_register_profile_words_remaining == 0) {
@@ -1582,35 +1603,41 @@ void spwm_clock_pulse(GPIO *io, const HardwareMapping &h,
                       gpio_bits_t spwm_out_bits,
                       gpio_bits_t spwm_write_mask,
                       SPWM_OE_Gate_State *spwm_gate) {
-  io->WriteMaskedBits(spwm_out_bits, spwm_write_mask);
-
-  if (spwm_gate != nullptr && spwm_gate->remaining > 0 && !spwm_gate->active) {
-    spwm_gate->active = true;
-    if (spwm_gate->capture_start_time) {
-      spwm_record_initial_oe_pulse_start();
-      spwm_gate->capture_start_time = false;
+  if (spwm_gate != nullptr && (spwm_gate->remaining > 0 || spwm_gate->active)) {
+    if (spwm_gate->remaining > 0 && !spwm_gate->active) {
+      spwm_gate->active = true;
+      if (spwm_gate->capture_start_time) {
+        spwm_record_initial_oe_pulse_start();
+        spwm_gate->capture_start_time = false;
+      }
     }
-  }
 
-  if (spwm_gate != nullptr && spwm_gate->active && spwm_gate->remaining > 0) {
-    io->SetBits(h.output_enable);
-  }
-
-  io->SetBits(h.clock);
-  io->ClearBits(h.clock);
-
-  if (spwm_gate != nullptr && spwm_gate->active && spwm_gate->remaining > 0) {
-    if (spwm_gate->pulse_each_clock) {
-      io->ClearBits(h.output_enable);
+    if (spwm_gate->active && spwm_gate->remaining > 0) {
+      io->SetBits(h.output_enable);
     }
-    if (--spwm_gate->remaining == 0) {
-      if (!spwm_gate->pulse_each_clock) {
+
+    io->WriteMaskedBits(spwm_out_bits, spwm_write_mask);
+    io->SetBits(h.clock);
+    io->ClearBits(h.clock);
+
+    if (spwm_gate->active && spwm_gate->remaining > 0) {
+      if (spwm_gate->pulse_each_clock) {
         io->ClearBits(h.output_enable);
       }
-      spwm_gate->active = false;
-      spwm_auto_tune_on_oe_pulse_end(spwm_gate->auto_tune,
-                                     spwm_gate->section);
+      if (--spwm_gate->remaining == 0) {
+        if (!spwm_gate->pulse_each_clock) {
+          io->ClearBits(h.output_enable);
+        }
+        spwm_gate->active = false;
+        spwm_auto_tune_on_oe_pulse_end(spwm_gate->auto_tune,
+                                       spwm_gate->section);
+      }
     }
+  } else {
+    // Fast path: pure data clock without OE gating
+    io->WriteMaskedBits(spwm_out_bits, spwm_write_mask);
+    io->SetBits(h.clock);
+    io->ClearBits(h.clock);
   }
 }
 
@@ -2216,6 +2243,69 @@ void spwm_finish_upload_clock(
   }
 }
 
+// Precompute and cache the physical-to-visible column routing table in runtime
+// state so that no dynamic heap allocations occur during per-frame RGB upload.
+const std::vector<SPWM_Column_Route> &spwm_get_cached_column_routes(
+    int spwm_columns, int spwm_physical_slot_count,
+    bool spwm_split_horizontal_lanes,
+    int spwm_panel_columns,
+    const SPWM_Panel_Settings &spwm_settings) {
+  SPWM_Runtime_State &spwm_runtime_state = spwm_get_runtime_state();
+  const int spwm_layout_flag = spwm_split_horizontal_lanes ? 1 : 0;
+  if (spwm_runtime_state.cached_column_routes_key_columns == spwm_columns &&
+      spwm_runtime_state.cached_column_routes_key_slots == spwm_physical_slot_count &&
+      spwm_runtime_state.cached_column_routes_key_layout == spwm_layout_flag &&
+      spwm_runtime_state.cached_column_routes_key_panel_columns == spwm_panel_columns) {
+    return spwm_runtime_state.cached_column_routes;
+  }
+
+  const int spwm_split_lane_chain_columns =
+      spwm_split_horizontal_lanes ? spwm_columns / 2 : spwm_columns;
+  const int spwm_split_panel_columns =
+      spwm_split_horizontal_lanes ? spwm_panel_columns : spwm_columns;
+  const int spwm_split_panel_lane_columns = spwm_split_panel_columns / 2;
+
+  const SPWM_Column_Route spwm_invalid_column_route = {-1, -1};
+  spwm_runtime_state.cached_column_routes.assign(
+      static_cast<size_t>(spwm_physical_slot_count),
+      spwm_invalid_column_route);
+
+  for (int spwm_physical_column = 0;
+       spwm_physical_column < spwm_physical_slot_count;
+       ++spwm_physical_column) {
+    SPWM_Column_Route &spwm_column_route =
+        spwm_runtime_state.cached_column_routes[spwm_physical_column];
+    if (spwm_split_horizontal_lanes) {
+      const int spwm_lane_chain_column =
+          spwm_physical_column % spwm_split_lane_chain_columns;
+      const int spwm_panel_index =
+          spwm_lane_chain_column / spwm_split_panel_lane_columns;
+      const int spwm_panel_lane_column =
+          spwm_lane_chain_column % spwm_split_panel_lane_columns;
+      spwm_column_route.first_column =
+          spwm_panel_index * spwm_split_panel_columns +
+          spwm_panel_lane_column;
+      spwm_column_route.second_column =
+          spwm_column_route.first_column + spwm_split_panel_lane_columns;
+      continue;
+    }
+
+    const int spwm_visible_column = spwm_map_physical_column_to_visible(
+        spwm_physical_column, spwm_settings);
+    if (spwm_visible_column >= 0 &&
+        spwm_visible_column < spwm_columns) {
+      spwm_column_route.first_column = spwm_visible_column;
+    }
+  }
+
+  spwm_runtime_state.cached_column_routes_key_columns = spwm_columns;
+  spwm_runtime_state.cached_column_routes_key_slots = spwm_physical_slot_count;
+  spwm_runtime_state.cached_column_routes_key_layout = spwm_layout_flag;
+  spwm_runtime_state.cached_column_routes_key_panel_columns = spwm_panel_columns;
+
+  return spwm_runtime_state.cached_column_routes;
+}
+
 // Walk the framebuffer in logical-row / channel / chip order and hand each
 // pre-expanded 16-clock word block to the caller. The direct and shift-register
 // upload paths share this traversal and only differ in the per-clock scan/OE
@@ -2283,54 +2373,21 @@ void spwm_upload_framebuffer_blocks(
           : (spwm_routing_context.serial_uses_rgb1
                  ? spwm_routing_context.rgb1_bits
                  : spwm_routing_context.rgb2_bits);
-  const int spwm_split_lane_chain_columns =
-      spwm_split_horizontal_lanes
-          ? spwm_framebuffer_view.columns / 2
-          : spwm_framebuffer_view.columns;
-  // The framebuffer width includes every chained panel. Split each panel into
-  // its own RGB1/RGB2 halves instead of splitting the complete chain once.
-  const int spwm_split_panel_columns =
+  const int spwm_physical_slot_count =
+      spwm_chip_count * spwm_channels_per_chip;
+  const int spwm_panel_columns =
       spwm_split_horizontal_lanes
           ? spwm_get_runtime_state().panel_columns
           : spwm_framebuffer_view.columns;
-  const int spwm_split_panel_lane_columns = spwm_split_panel_columns / 2;
-  const int spwm_physical_slot_count =
-      spwm_chip_count * spwm_channels_per_chip;
-  const SPWM_Column_Route spwm_invalid_column_route = {-1, -1};
-  std::vector<SPWM_Column_Route> spwm_column_routes(
-      static_cast<size_t>(spwm_physical_slot_count),
-      spwm_invalid_column_route);
 
-  // Column routing depends only on upload geometry, not on the active row.
-  // Preserve sparse blank slots and split-lane ordering while moving the
-  // division/modulo and missing-column walk out of the per-row hot loop.
-  for (int spwm_physical_column = 0;
-       spwm_physical_column < spwm_physical_slot_count;
-       ++spwm_physical_column) {
-    SPWM_Column_Route &spwm_column_route =
-        spwm_column_routes[spwm_physical_column];
-    if (spwm_split_horizontal_lanes) {
-      const int spwm_lane_chain_column =
-          spwm_physical_column % spwm_split_lane_chain_columns;
-      const int spwm_panel_index =
-          spwm_lane_chain_column / spwm_split_panel_lane_columns;
-      const int spwm_panel_lane_column =
-          spwm_lane_chain_column % spwm_split_panel_lane_columns;
-      spwm_column_route.first_column =
-          spwm_panel_index * spwm_split_panel_columns +
-          spwm_panel_lane_column;
-      spwm_column_route.second_column =
-          spwm_column_route.first_column + spwm_split_panel_lane_columns;
-      continue;
-    }
-
-    const int spwm_visible_column = spwm_map_physical_column_to_visible(
-        spwm_physical_column, spwm_settings);
-    if (spwm_visible_column >= 0 &&
-        spwm_visible_column < spwm_framebuffer_view.columns) {
-      spwm_column_route.first_column = spwm_visible_column;
-    }
-  }
+  // Retrieve cached physical-to-visible column route mappings (zero allocation).
+  const std::vector<SPWM_Column_Route> &spwm_column_routes =
+      spwm_get_cached_column_routes(
+          spwm_framebuffer_view.columns,
+          spwm_physical_slot_count,
+          spwm_split_horizontal_lanes,
+          spwm_panel_columns,
+          spwm_settings);
 
   for (int spwm_row = 0; spwm_row < spwm_upload_rows; ++spwm_row) {
     // Full-height modes reuse the stored double rows, then select RGB1 or RGB2
@@ -2468,7 +2525,7 @@ void spwm_upload_framebuffer_direct(
       spwm_channels_per_chip,
       [&](const SPWM_Pixel_Block_GPIO_Bits &spwm_block_gpio_bits,
           bool spwm_is_last_chip) {
-        for (int spwm_bit = spwm_word_bits - 1; spwm_bit >= 0; --spwm_bit) {
+        for (int spwm_bit = spwm_word_bits - 1; spwm_bit >= 1; --spwm_bit) {
           const bool spwm_direct_defer_row_scan = *spwm_initial_oe_pending;
           if (!spwm_direct_defer_row_scan) {
             spwm_scan_pre_clock_direct_upload(
@@ -2476,17 +2533,33 @@ void spwm_upload_framebuffer_direct(
                 spwm_oe_gate, spwm_scan_state);
           }
 
-          const bool spwm_latch = spwm_is_last_chip && spwm_bit == 0;
-          if (spwm_latch) io->SetBits(h.strobe);
           spwm_clock_pulse(io, h,
                            spwm_block_gpio_bits.word_gpio_bits[spwm_bit],
                            spwm_data_mask, spwm_oe_gate);
-          if (spwm_latch) io->ClearBits(h.strobe);
 
           spwm_finish_upload_clock(
               spwm_direct_defer_row_scan, spwm_initial_oe_pending,
               spwm_upload_scan_config, spwm_oe_gate, spwm_scan_state);
-          if (spwm_latch) spwm_emit_lat_spacer();
+        }
+
+        if (spwm_word_bits > 0) {
+          const bool spwm_direct_defer_row_scan = *spwm_initial_oe_pending;
+          if (!spwm_direct_defer_row_scan) {
+            spwm_scan_pre_clock_direct_upload(
+                io, spwm_row_setter, spwm_upload_rows, spwm_upload_scan_config,
+                spwm_oe_gate, spwm_scan_state);
+          }
+
+          if (spwm_is_last_chip) io->SetBits(h.strobe);
+          spwm_clock_pulse(io, h,
+                           spwm_block_gpio_bits.word_gpio_bits[0],
+                           spwm_data_mask, spwm_oe_gate);
+          if (spwm_is_last_chip) io->ClearBits(h.strobe);
+
+          spwm_finish_upload_clock(
+              spwm_direct_defer_row_scan, spwm_initial_oe_pending,
+              spwm_upload_scan_config, spwm_oe_gate, spwm_scan_state);
+          if (spwm_is_last_chip) spwm_emit_lat_spacer();
         }
       });
 }
@@ -2604,7 +2677,7 @@ void spwm_upload_framebuffer_shiftreg(
       spwm_channels_per_chip,
       [&](const SPWM_Pixel_Block_GPIO_Bits &spwm_block_gpio_bits,
           bool spwm_is_last_chip) {
-        for (int spwm_bit = spwm_word_bits - 1; spwm_bit >= 0; --spwm_bit) {
+        for (int spwm_bit = spwm_word_bits - 1; spwm_bit >= 1; --spwm_bit) {
           const bool spwm_shiftreg_defer_row_scan = *spwm_initial_oe_pending;
           if (!spwm_shiftreg_defer_row_scan) {
             spwm_scan_pre_clock_shiftreg_upload(
@@ -2612,17 +2685,33 @@ void spwm_upload_framebuffer_shiftreg(
                 spwm_oe_gate, spwm_scan_state);
           }
 
-          const bool spwm_latch = spwm_is_last_chip && spwm_bit == 0;
-          if (spwm_latch) io->SetBits(h.strobe);
           spwm_clock_pulse(io, h,
                            spwm_block_gpio_bits.word_gpio_bits[spwm_bit],
                            spwm_data_mask, spwm_oe_gate);
-          if (spwm_latch) io->ClearBits(h.strobe);
 
           spwm_finish_upload_clock(
               spwm_shiftreg_defer_row_scan, spwm_initial_oe_pending,
               spwm_upload_scan_config, spwm_oe_gate, spwm_scan_state);
-          if (spwm_latch) spwm_emit_lat_spacer();
+        }
+
+        if (spwm_word_bits > 0) {
+          const bool spwm_shiftreg_defer_row_scan = *spwm_initial_oe_pending;
+          if (!spwm_shiftreg_defer_row_scan) {
+            spwm_scan_pre_clock_shiftreg_upload(
+                io, h, spwm_scan_rows, spwm_upload_scan_config,
+                spwm_oe_gate, spwm_scan_state);
+          }
+
+          if (spwm_is_last_chip) io->SetBits(h.strobe);
+          spwm_clock_pulse(io, h,
+                           spwm_block_gpio_bits.word_gpio_bits[0],
+                           spwm_data_mask, spwm_oe_gate);
+          if (spwm_is_last_chip) io->ClearBits(h.strobe);
+
+          spwm_finish_upload_clock(
+              spwm_shiftreg_defer_row_scan, spwm_initial_oe_pending,
+              spwm_upload_scan_config, spwm_oe_gate, spwm_scan_state);
+          if (spwm_is_last_chip) spwm_emit_lat_spacer();
         }
       });
 }
@@ -3150,6 +3239,7 @@ void spwm_configure_panel_type(const char *spwm_panel_type, int spwm_columns,
           : spwm_runtime_state.panel_settings.default_columns;
   spwm_runtime_state.data_layout = spwm_data_layout;
   spwm_runtime_state.multiplexing = spwm_multiplexing;
+  spwm_runtime_state.static_init_completed = false;
 
   spwm_apply_panel_env_overrides(&spwm_runtime_state.panel_settings);
   spwm_auto_tune_control.loaded = false;
@@ -3300,7 +3390,9 @@ bool spwm_is_enabled() {
 // or completion state.
 void spwm_set_enabled(bool spwm_is_enabled_value) {
   if (!spwm_is_enabled_value) spwm_reset_register_profile_state();
-  spwm_get_runtime_state().enabled = spwm_is_enabled_value;
+  SPWM_Runtime_State &spwm_runtime_state = spwm_get_runtime_state();
+  spwm_runtime_state.enabled = spwm_is_enabled_value;
+  spwm_runtime_state.static_init_completed = false;
 }
 
 // Reset both the measured init-OE timestamp and any pending target deadline.
@@ -3530,17 +3622,19 @@ void spwm_dump_to_matrix(GPIO *io, const HardwareMapping &h,
 
   // After upload, keep scanning rows and pulsing OE so the completed frame
   // stays visible for the configured hold period.
-  spwm_oe_gate.section = SPWM_AUTO_TUNE_SECTION_FREE;
-  if (spwm_blank_clock_row_transport) {
-    spwm_free_run_scan<spwm_scan_pre_clock_shiftreg>(
-        io, h, spwm_rgb_mask, spwm_data_mask, spwm_row_setter,
-        spwm_effective_scan_rows, spwm_end_of_frame_extra_row_cycles,
-        spwm_free_scan_config, &spwm_oe_gate, &spwm_scan_state);
-  } else {
-    spwm_free_run_scan<spwm_scan_pre_clock_direct>(
-        io, h, spwm_rgb_mask, spwm_data_mask, spwm_row_setter,
-        spwm_effective_scan_rows, spwm_end_of_frame_extra_row_cycles,
-        spwm_free_scan_config, &spwm_oe_gate, &spwm_scan_state);
+  if (spwm_end_of_frame_extra_row_cycles > 0) {
+    spwm_oe_gate.section = SPWM_AUTO_TUNE_SECTION_FREE;
+    if (spwm_blank_clock_row_transport) {
+      spwm_free_run_scan<spwm_scan_pre_clock_shiftreg>(
+          io, h, spwm_rgb_mask, spwm_data_mask, spwm_row_setter,
+          spwm_effective_scan_rows, spwm_end_of_frame_extra_row_cycles,
+          spwm_free_scan_config, &spwm_oe_gate, &spwm_scan_state);
+    } else {
+      spwm_free_run_scan<spwm_scan_pre_clock_direct>(
+          io, h, spwm_rgb_mask, spwm_data_mask, spwm_row_setter,
+          spwm_effective_scan_rows, spwm_end_of_frame_extra_row_cycles,
+          spwm_free_scan_config, &spwm_oe_gate, &spwm_scan_state);
+    }
   }
 
   // Finish on a clean row-wrap boundary so the next frame starts from a
