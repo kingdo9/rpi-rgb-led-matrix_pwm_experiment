@@ -1,4 +1,9 @@
 // -*- mode: c++; c-basic-offset: 2; indent-tabs-mode: nil; -*-
+// RP1 physical addresses exceed 32 bits, including on 32-bit userspace.
+#ifndef _LARGEFILE64_SOURCE
+#define _LARGEFILE64_SOURCE
+#endif
+
 #include "rp1_spwm_gpio.h"
 
 #include <fcntl.h>
@@ -19,7 +24,7 @@ namespace {
 // are backed by RP1 RIO registers instead of the legacy BCM GPIO block.
 static const uint32_t kRp1GpioFunctionSysRio = 5;
 static const uint32_t kRp1PadFastDrive = 0x15;
-static const off_t kRp1RioPeripheralBase = 0x1f000d0000ll;
+static const off64_t kRp1RioPeripheralBase = 0x1f000d0000ll;
 static const size_t kRp1RioMapSizeBytes = 0x40000;
 static const uint32_t kRp1GpioOffsetWords = 0x00000 / 4;
 static const uint32_t kRp1RioOffsetWords = 0x10000 / 4;
@@ -45,11 +50,11 @@ static Rp1RioRegs *s_RP1_rio_out = NULL;
 static Rp1RioRegs *s_RP1_rio_set = NULL;
 static Rp1RioRegs *s_RP1_rio_clr = NULL;
 
-static volatile uint32_t *TryMmapRp1Registers(const char *path, off_t offset) {
+static volatile uint32_t *TryMmapRp1Registers(const char *path, off64_t offset) {
   const int fd = open(path, O_RDWR | O_SYNC);
   if (fd < 0) return NULL;
 
-  void *map = mmap(NULL, kRp1RioMapSizeBytes, PROT_READ | PROT_WRITE,
+  void *map = mmap64(NULL, kRp1RioMapSizeBytes, PROT_READ | PROT_WRITE,
                    MAP_SHARED, fd, offset);
   close(fd);
   if (map == MAP_FAILED) return NULL;
@@ -61,7 +66,7 @@ static bool MmapAllRp1RioRegistersOnce() {
 
   static const struct {
     const char *path;
-    off_t offset;
+    off64_t offset;
   } candidates[] = {
       {"/dev/gpiomem0", 0},
       {"/dev/gpiomem0", kRp1RioPeripheralBase},
